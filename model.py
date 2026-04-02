@@ -68,3 +68,65 @@ class BezierDecoderLayer(nn.Module):
         # Avoid division by zero
         curve = numerator / (denominator + 1e-8)
         return curve
+
+class Generator(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.noise_dim = config.get('noise_dimension')
+        self.cond_dim = 5
+        self.hid_node = config.get('gen_hid_node')
+        self.hid_layer = config.get('gen_hid_layer')
+        
+        act_fun = nn.LeakyReLU(0.2)
+        layers = []
+        in_dim = self.noise_dim + self.cond_dim
+        for _ in range(self.hid_layer):
+            layers.append(nn.Linear(in_dim, self.hid_node))
+            layers.append(act_fun)
+            in_dim = self.hid_node
+            
+        self.fc_blocks = nn.Sequential(*layers)
+        
+        self.num_cp = config.get('num_control_points')
+        self.out_layer = nn.Linear(self.hid_node, self.num_cp * 3)
+        self.bezier_layer = BezierDecoderLayer()
+
+    def forward(self, noise, cond):
+        x = torch.cat([noise, cond], dim=1)
+        x = self.fc_blocks(x)
+        x = self.out_layer(x) # (Batch, N * 3)
+        
+        # Reshape to control points and weights
+        x = x.view(-1, self.num_cp, 3)
+        control_points = x[:, :, :2]
+        
+        # Weights should be positive to avoid negative denominators / singular curves
+        weights = torch.nn.functional.softplus(x[:, :, 2])
+        
+        curve = self.bezier_layer(control_points, weights) # (Batch, M, 2)
+        return curve.view(curve.size(0), -1) # Flatten to (Batch, M*2)
+
+class Discriminator(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.cond_dim = 5
+        self.input_dim = config.get('num_output_points') * 2
+        self.hid_node = config.get('gen_hid_node')
+        self.hid_layer = config.get('gen_hid_layer')
+        
+        act_fun = nn.LeakyReLU(0.2)
+            
+        layers = []
+        in_dim = self.input_dim + self.cond_dim
+        for _ in range(self.hid_layer):
+            layers.append(nn.Linear(in_dim, self.hid_node))
+            layers.append(act_fun)
+            in_dim = self.hid_node
+            
+        layers.append(nn.Linear(self.hid_node, 1))
+        self.fc_blocks = nn.Sequential(*layers)
+
+    def forward(self, coords, cond):
+        x = torch.cat([coords, cond], dim=1)
+        validity = self.fc_blocks(x)
+        return validity

@@ -16,7 +16,17 @@ FILES_TO_DELETE = [
     "30p-30n.dat",
     "30p-30n-flap.dat",
     "30p-30n-main.dat",
-    "30p-30n-slat.dat"
+    "30p-30n-slat.dat",
+    "e376.dat",
+    "e377.dat",
+    "e377m.dat",
+    "e378.dat",
+    "e379.dat",
+    "s1210.dat",
+    "s1211.dat",
+    "s1221-4deg-flap.dat",
+    "s1223.dat",
+    "s1223rtl.dat",
 ]
 
 def manage_files():

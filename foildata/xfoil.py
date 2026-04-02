@@ -8,6 +8,7 @@ import glob
 # Define relative paths from foildata/
 COORD_DIR = "processed_foil"
 POLAR_DIR = "polars"
+foil_n = 100
 
 # Ensure output directory exists
 os.makedirs(os.path.join(os.path.dirname(__file__), POLAR_DIR), exist_ok=True)
@@ -85,8 +86,8 @@ if __name__ == "__main__":
     coord_path = os.path.join(base_dir, COORD_DIR)
     all_foils = [os.path.basename(f) for f in glob.glob(os.path.join(coord_path, "*.dat"))]
     
-    if len(all_foils) > 10:
-        selected_foils = random.sample(all_foils, 10)
+    if len(all_foils) > foil_n:
+        selected_foils = random.sample(all_foils, foil_n)
     else:
         selected_foils = all_foils
 

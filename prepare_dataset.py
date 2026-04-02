@@ -11,6 +11,7 @@ def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset
     
     # 获取所有的 polar.txt 文件
     polar_files = glob.glob(os.path.join(polars_dir, "*_polar.txt"))
+    print("found "+str(len(polar_files))+" polar files!")
     
     for p_file in polar_files:
         basename = os.path.basename(p_file)
