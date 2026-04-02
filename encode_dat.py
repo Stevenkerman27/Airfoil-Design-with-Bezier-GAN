@@ -68,9 +68,9 @@ def main():
     indices = torch.linspace(0, K - 1, N).long()
     init_cp = target_points[0, indices].clone()
     
-    # Fix start and end points
-    fixed_start_cp = target_points[:, 0:1, :] # (1, 1, 2)
-    fixed_end_cp = target_points[:, -1:, :] # (1, 1, 2)
+    # Fix start and end points to (-1, 0) as required by the model
+    fixed_start_cp = torch.tensor([[[1.0, 0.0]]], dtype=torch.float32, device=target_points.device) # (1, 1, 2)
+    fixed_end_cp = torch.tensor([[[1.0, 0.0]]], dtype=torch.float32, device=target_points.device) # (1, 1, 2)
     
     # Intermediate control points are trainable
     inner_init_cp = init_cp[1:-1, :].unsqueeze(0) # (1, N-2, 2)

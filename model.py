@@ -98,7 +98,12 @@ class Generator(nn.Module):
         
         # Reshape to control points and weights
         x = x.view(-1, self.num_cp, 3)
-        control_points = x[:, :, :2]
+        control_points = x[:, :, :2].clone()
+        
+        # Fix the first and last control points to (-1, 0)
+        fixed_pt = torch.tensor([1.0, 0.0], device=x.device, dtype=x.dtype)
+        control_points[:, 0, :] = fixed_pt
+        control_points[:, -1, :] = fixed_pt
         
         # Weights should be positive to avoid negative denominators / singular curves
         weights = torch.nn.functional.softplus(x[:, :, 2])
