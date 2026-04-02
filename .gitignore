@@ -1,7 +1,5 @@
 __pycache__/
 .vscode/
-autoencoder/
-interpolator/
 foildata/polars
 foildata/coord_seligFmt
 foildata/processed_foil

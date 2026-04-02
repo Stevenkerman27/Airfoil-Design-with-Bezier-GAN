@@ -2,7 +2,6 @@ num_control_points: 60
 num_output_points: 60
 point_density_beta: 1.5
 noise_dimension: 10
-confition_dimension: 3
 gen_hid_node: 512
 gen_hid_layer: 3
 gen_hid_fun: LeakyRELU

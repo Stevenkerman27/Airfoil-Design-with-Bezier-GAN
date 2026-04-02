@@ -19,7 +19,7 @@ def load_dat(file_path):
                     pass
     return torch.tensor(points, dtype=torch.float32)
 
-def visualize_result(target_points, curve_points, control_points, weights, config, save_path='bezier_fit_result.png'):
+def visualize_result(target_points, curve_points, control_points, weights, config, save_path='model/bezier_fit_result.png'):
     """
     可视化编码结果，并标注控制点权重
     """
@@ -42,8 +42,9 @@ def visualize_result(target_points, curve_points, control_points, weights, confi
     plt.legend()
     plt.title(f"Airfoil Bezier Encoding ({config['num_control_points']} CP, {config['num_output_points']} Pts)")
     plt.grid(True, linestyle='--', alpha=0.5)
-    plt.show()
+    
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
     print(f"Visualization saved to {save_path}")
 
 def main():
@@ -114,7 +115,7 @@ def main():
             print(f"Iter {i}, Total: {total_loss.item():.5f}, MSE: {loss.item():.5f}, Reg: {reg_loss.item():.5f}, Len:  {length_penalty.item():.5f}")
             
     # Save the result
-    out_file = "encoded_bezier.pt"
+    out_file = "model/encoded_bezier.pt"
     with torch.no_grad():
         final_cp = torch.cat([fixed_start_cp, trainable_control_points, fixed_end_cp], dim=1)
         final_w = torch.abs(weights)

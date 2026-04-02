@@ -1,3 +1,3 @@
 在encode_bat.py中编写将foildata\coord_seligFmt中的.dat翼型文件编码成贝塞尔曲线的代码, 新建config文件定义贝塞尔曲线控制点数量，输出的曲线坐标点数量，以及所需的其他参数。不需要是神经网络，先对一个翼型，如naca2412.dat编码，把结果写入一个结果文件。在model.py中编写基于pytorch的贝塞尔曲线神经网络层。接受控制点坐标和控制点权重作为神经网络输入，输出按曲率大小疏密分布的一定数量的曲线坐标。同样使用config文件定义贝塞尔曲线参数。编写完成后，让神经网络读取编码的贝塞尔曲线参数。新建可视化代码比较原翼型形状和编码-解码后的翼型形状(已完成)
 
-编写cWGAN-GP. 生成器的网络配置定义在config.yaml中，生成器最后一层为model.py中定义的BezierDecoderLayer. 
+编写cWGAN-GP. 生成器的网络配置定义在config.yaml中，生成器最后一层为model.py中定义的BezierDecoderLayer. 判别器的数据集为model/airfoil_dataset.pt,编写必要的数据集实例化代码和训练代码。
