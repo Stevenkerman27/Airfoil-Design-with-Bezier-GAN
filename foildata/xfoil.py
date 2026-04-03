@@ -8,7 +8,7 @@ import glob
 # Define relative paths from foildata/
 COORD_DIR = "processed_foil"
 POLAR_DIR = "polars"
-foil_n = 100
+foil_n = 200
 
 # Ensure output directory exists
 os.makedirs(os.path.join(os.path.dirname(__file__), POLAR_DIR), exist_ok=True)

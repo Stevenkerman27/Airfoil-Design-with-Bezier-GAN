@@ -27,6 +27,15 @@ FILES_TO_DELETE = [
     "s1221-4deg-flap.dat",
     "s1223.dat",
     "s1223rtl.dat",
+    "as6091.dat",
+    "as6092.dat",
+    "as6093.dat",
+    "as6094.dat",
+    "as6095.dat",
+    "as6096.dat",
+    "as6097.dat",
+    "as6098.dat",
+    "as6099.dat",
 ]
 
 def manage_files():

@@ -2,6 +2,43 @@ import os
 import glob
 import torch
 import numpy as np
+import matplotlib.pyplot as plt
+
+def plot_label_statistics(data_list, output_path="model/label_statistics.png"):
+    """
+    绘制 CL, CD, CM 的箱线图，并叠加所有原始数据点。
+    """
+    if not data_list:
+        print("警告: 数据集为空，跳过统计图绘制。")
+        return
+        
+    y_labels = torch.stack([d["y"] for d in data_list]).numpy()
+    coeffs = y_labels[:, 2:] 
+    label_names = ['CL', 'CD', 'CM']
+    
+    plt.figure(figsize=(15, 6))
+    for i in range(3):
+        plt.subplot(1, 3, i+1)
+        
+        # 1. 绘制箱线图 (关闭离群点显示 showfliers=False，因为我们要手动画所有点)
+        plt.boxplot(coeffs[:, i], widths=0.5, showfliers=False, 
+                    patch_artist=True, boxprops=dict(facecolor='lightblue', alpha=0.3))
+        
+        # 2. 生成水平抖动 (Jitter)
+        # 箱线图默认在 x=1 的位置，我们让散点在 1 附近随机偏移
+        x_jitter = np.random.normal(1, 0.04, size=len(coeffs[:, i]))
+        
+        # 3. 绘制所有散点
+        # s 是点的大小，alpha 是透明度（数据多时建议调低），c 是颜色
+        plt.scatter(x_jitter, coeffs[:, i], s=1, alpha=0.3, c='blue', label='Data Points')
+        
+        plt.title(label_names[i])
+        plt.grid(True, linestyle='--', alpha=0.5)
+        
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path)
+    print(f"包含所有数据点的统计图已保存至: {output_path}")
 
 def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset.pt"):
     """
@@ -91,6 +128,10 @@ def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset
             })
             
     print(f"\n数据集准备完成！总共收集了 {len(data_list)} 个样本。")
+    
+    # 绘制标签统计图
+    plot_label_statistics(data_list)
+    
     print(f"正在保存至 {output_file} ...")
     torch.save(data_list, output_file)
     print("保存成功！可以使用 torch.load('{}') 进行读取。".format(output_file))
