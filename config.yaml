@@ -7,3 +7,4 @@ gen_hid_layer: 3
 gen_hid_fun: LeakyRELU
 alpha_range_step: [0,8,1]
 Re_range_step: [1e5, 6e5, 1e5]
+max_Cd: 0.05

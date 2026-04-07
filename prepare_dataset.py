@@ -1,6 +1,7 @@
 import os
 import glob
 import torch
+import yaml
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -40,7 +41,7 @@ def plot_label_statistics(data_list, output_path="model/label_statistics.png"):
     plt.savefig(output_path)
     print(f"包含所有数据点的统计图已保存至: {output_path}")
 
-def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset.pt"):
+def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset.pt", max_cd=None):
     """
     读取翼型坐标文件和极曲线数据，将坐标点展平为 1D 特征张量,并提取对应的气动参数（alpha, Re, CL, CD, CM）作为 1D 标签向量。
     """
@@ -113,6 +114,10 @@ def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset
                 CM = float(vals[4])
             except ValueError:
                 continue
+
+            # 过滤 CD 过大的数据
+            if max_cd is not None and CD > max_cd:
+                continue
                 
             # 展平拼接为 1D 张量 (仅坐标), 采用 x,y,x,y顺序
             coords_flat = coords.flatten()
@@ -137,9 +142,19 @@ def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset
     print("保存成功！可以使用 torch.load('{}') 进行读取。".format(output_file))
 
 if __name__ == '__main__':
+    # 读取配置
+    config_path = "config.yaml"
+    max_cd = None
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+            max_cd = config.get('max_Cd')
+            if max_cd is not None:
+                print(f"将过滤 CD > {max_cd} 的数据")
+
     # 按照当前目录结构设置路径
     processed_dir = os.path.join("foildata", "processed_foil")
     polars_dir = os.path.join("foildata", "polars")
     out_file = "model/airfoil_dataset.pt"
     
-    prepare_dataset(processed_dir, polars_dir, out_file)
+    prepare_dataset(processed_dir, polars_dir, out_file, max_cd=max_cd)

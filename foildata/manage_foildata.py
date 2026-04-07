@@ -36,6 +36,8 @@ FILES_TO_DELETE = [
     "as6097.dat",
     "as6098.dat",
     "as6099.dat",
+    "goe531.dat",
+    "ua2-180.dat"
 ]
 
 def manage_files():
@@ -80,6 +82,8 @@ def resample_airfoils(source_dir, target_dir):
     
     success_count = 0
     fail_count = 0
+    thick_count = 0
+    thick_files = []
     
     for file_path in dat_files:
         filename = file_path.name
@@ -94,12 +98,21 @@ def resample_airfoils(source_dir, target_dir):
         else:
             output_name = filename
             
-        if resample_single_airfoil(file_path, target_dir, num_points, beta, output_name):
+        status, rel_thickness = resample_single_airfoil(file_path, target_dir, num_points, beta, output_name)
+        if status is True:
             success_count += 1
+        elif status == "thick":
+            thick_count += 1
+            thick_files.append((filename, rel_thickness))
         else:
             fail_count += 1
             
-    print(f"Processing complete. Success: {success_count}, Failed: {fail_count}")
+    if thick_files:
+        print("\nSkipped files due to high relative thickness:")
+        for name, t in thick_files:
+            print(f"  {name}: {t:.2%}")
+            
+    print(f"Processing complete. Success: {success_count}, Failed: {fail_count}, Skipped (thick): {thick_count}")
 
 def resample_single_airfoil(file_path, target_dir, num_points, beta=2.0, output_name=None):
     try:
@@ -107,7 +120,7 @@ def resample_single_airfoil(file_path, target_dir, num_points, beta=2.0, output_
             lines = [line.strip() for line in f if line.strip()]
         
         if len(lines) < 2:
-            return False
+            return False, 0
             
         header = lines[0]
         coords = []
@@ -119,11 +132,31 @@ def resample_single_airfoil(file_path, target_dir, num_points, beta=2.0, output_
                 except ValueError:
                     pass
         if not coords:
-            return False
+            return False, 0
             
         coords = np.array(coords)
         x = coords[:, 0]
         y = coords[:, 1]
+
+        # Calculate relative thickness
+        idx_le = np.argmin(x)
+        x_le, x_max = np.min(x), np.max(x)
+        chord = x_max - x_le
+        if chord > 0:
+            surf1_x, surf1_y = x[:idx_le+1], y[:idx_le+1]
+            surf2_x, surf2_y = x[idx_le:], y[idx_le:]
+            x_test = np.linspace(x_le, x_max, 101)
+            # Sort to ensure monotonic x for interpolation
+            s1 = np.argsort(surf1_x)
+            s2 = np.argsort(surf2_x)
+            y1_interp = np.interp(x_test, surf1_x[s1], surf1_y[s1])
+            y2_interp = np.interp(x_test, surf2_x[s2], surf2_y[s2])
+            rel_thickness = np.max(np.abs(y1_interp - y2_interp)) / chord
+            
+            if rel_thickness > 0.20:
+                return "thick", rel_thickness
+        else:
+            rel_thickness = 0
         
         # Calculate cumulative arc length
         dx = np.diff(x)
@@ -132,7 +165,7 @@ def resample_single_airfoil(file_path, target_dir, num_points, beta=2.0, output_
         s = np.insert(np.cumsum(ds), 0, 0.0)
         
         if s[-1] == 0:
-            return False
+            return False, 0
             
         s = s / s[-1] # Normalize to [0, 1]
 
@@ -142,7 +175,7 @@ def resample_single_airfoil(file_path, target_dir, num_points, beta=2.0, output_
         y_unique = y[idx]
         
         if len(s_unique) < 2:
-            return False
+            return False, 0
 
         interp_x = interp1d(s_unique, x_unique, kind='linear')
         interp_y = interp1d(s_unique, y_unique, kind='linear')
@@ -167,10 +200,10 @@ def resample_single_airfoil(file_path, target_dir, num_points, beta=2.0, output_
             for rx, ry in zip(resampled_x, resampled_y):
                 f.write(f" {rx:10.6f} {ry:10.6f}\n")
                 
-        return True
+        return True, rel_thickness
     except Exception as e:
         # print(f"Error resampling {file_path.name}: {e}")
-        return False
+        return False, 0
 
 def validate_coordinates(target_dir, tolerance=1e-2):
     print("\n--- Validation Phase ---")
