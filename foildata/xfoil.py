@@ -25,6 +25,28 @@ def get_re_list(config):
     # [start, end, step] -> inclusive of end if possible
     return np.arange(re_range[0], re_range[1] + re_range[2]/2, re_range[2])
 
+def _execute_xfoil(commands, cwd, timeout):
+    """
+    Helper function to execute xfoil commands via subprocess and handle timeouts.
+    Returns: (stdout, stderr, is_timeout)
+    """
+    process = subprocess.Popen(
+        ['xfoil'], 
+        stdin=subprocess.PIPE, 
+        stdout=subprocess.PIPE, 
+        stderr=subprocess.PIPE, 
+        text=True,
+        cwd=cwd
+    )
+    
+    try:
+        stdout, stderr = process.communicate(input=commands, timeout=timeout)
+        return stdout, stderr, False
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout, stderr = process.communicate()
+        return stdout, stderr, True
+
 def run_xfoil(airfoil_name, reynolds, alpha_start, alpha_end, alpha_step):
     """
     airfoil_name: .dat文件名
@@ -58,24 +80,64 @@ def run_xfoil(airfoil_name, reynolds, alpha_start, alpha_end, alpha_step):
     QUIT
     """
 
-    # Start process in the coordinate directory
-    process = subprocess.Popen(
-        ['xfoil'], 
-        stdin=subprocess.PIPE, 
-        stdout=subprocess.PIPE, 
-        stderr=subprocess.PIPE, 
-        text=True,
-        cwd=os.path.join(base_dir, COORD_DIR)
-    )
+    cwd = os.path.join(base_dir, COORD_DIR)
+    stdout, _, is_timeout = _execute_xfoil(commands, cwd, timeout=30)
     
-    try:
-        stdout, stderr = process.communicate(input=commands, timeout=30)
-        return stdout
-    except subprocess.TimeoutExpired:
+    if is_timeout:
         print(f"警告: {airfoil_name} 在 Re={reynolds} 下计算超时(30秒)，已中断并跳过")
-        process.kill()
-        stdout, stderr = process.communicate()
-        return stdout
+        
+    return stdout
+
+def run_xfoil_single(coords, reynolds, alpha, timeout=5):
+    """
+    Evaluates a single airfoil using Xfoil.
+    Returns the Cl value if successful, or None if it fails to converge.
+    """
+    import tempfile
+    import uuid
+    
+    # Generate unique filename for the temporary coordinates
+    temp_filename = f"temp_foil_{uuid.uuid4().hex[:8]}.dat"
+    base_dir = os.path.dirname(__file__)
+    coord_dir = os.path.join(base_dir, COORD_DIR)
+    os.makedirs(coord_dir, exist_ok=True)
+    temp_filepath = os.path.join(coord_dir, temp_filename)
+    
+    # Write coordinates to temp file
+    try:
+        with open(temp_filepath, 'w') as f:
+            f.write(f"Temp Airfoil\n")
+            for pt in coords:
+                f.write(f"{pt[0]:.6f} {pt[1]:.6f}\n")
+                
+        commands = f"""
+        NORM
+        LOAD {temp_filename}
+        OPER
+        ITER 50
+        VISC {reynolds}
+        ALFA {alpha}
+        QUIT
+        """
+        
+        stdout, _, is_timeout = _execute_xfoil(commands, coord_dir, timeout=timeout)
+        
+        if is_timeout:
+            return None
+            
+        # Parse output for Cl
+        for line in reversed(stdout.split('\n')):
+            if 'a =' in line and 'CL =' in line:
+                parts = line.split()
+                try:
+                    cl_idx = parts.index('CL') + 2 # usually 'CL = 0.5000'
+                    return float(parts[cl_idx])
+                except (ValueError, IndexError):
+                    pass
+        return None
+    finally:
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
 
 if __name__ == "__main__":
     config = load_config()

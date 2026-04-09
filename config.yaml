@@ -11,8 +11,10 @@ disc_conv_kernel: 7
 disc_conv_channels: 16
 cond_dim: 4
 lr: 0.0001
-epochs: 200
+epochs: 100
 n_critic: 3
 lambda_gp: 10
 batch_size: 16
 device: cuda  # 设置计算设备: auto (自动选择), cuda, 或 cpu
+eps_start: 0.10
+eps_end: 0.02
