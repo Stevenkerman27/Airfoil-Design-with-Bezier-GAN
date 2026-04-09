@@ -3,6 +3,7 @@ import torch
 import yaml
 from model import Generator, Discriminator
 import numpy as np
+from utils import calculate_relative_thickness
 
 def generate_and_evaluate(user_label_list=None):
     if user_label_list is None:
@@ -76,18 +77,21 @@ def generate_and_evaluate(user_label_list=None):
         score = scores[i]
         airfoil_coords = generated_airfoils[i]
         
-        # 按照判别器打分命名文件
-        filename = f"{score:.6f}.dat"
+        # 计算生成翼型的实际厚度
+        thickness = calculate_relative_thickness(airfoil_coords)
+        
+        # 按照判别器打分和厚度命名文件
+        filename = f"T{thickness:.4f}_S{score:.4f}.dat"
         filepath = os.path.join(save_dir, filename)
         
         # 将生成的坐标保存为 .dat 文件 (标准XFoil格式：两列，以空格/制表符分隔)
         # 第一行通常写翼型名字
         with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(f"CGAN_Generated_Score_{score:.6f}\n")
+            f.write(f"CGAN_Generated_Thickness_{thickness:.4f}_Score_{score:.4f}\n")
             for pt in airfoil_coords:
                 f.write(f"{pt[0]:.6f} {pt[1]:.6f}\n")
         
-        print(f"Saved generated airfoil {i+1}/5 to {filepath} with Discriminator score: {score:.6f}")
+        print(f"Saved generated airfoil {i+1}/5 to {filepath} (Thickness: {thickness:.4f}, Score: {score:.4f})")
 
 if __name__ == '__main__':
     # 用户可以在此修改标签: [alpha, Re, Cl, Thickness]
