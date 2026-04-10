@@ -132,14 +132,15 @@ def train():
     optimizer_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(0.0, 0.9))
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(0.0, 0.9))
 
-    epochs = config.get('epochs', 120)
-    n_critic = config.get('n_critic', 3)
-    lambda_gp = config.get('lambda_gp', 10)
+    epochs = config.get('epochs')
+    pre_train_epoch = config.get('pre_train_epoch')
+    n_critic = config.get('n_critic')
+    lambda_gp = config.get('lambda_gp')
     
     # Load norm stats
     norm_stats = torch.load("model/cond_norm.pt", map_location=device, weights_only=True)
-    eps_start = config.get('eps_start', 0.10)
-    eps_end = config.get('eps_end', 0.02)
+    eps_start = config.get('eps_start')
+    eps_end = config.get('eps_end')
 
     # Lists to keep track of progress
     d_losses = []
@@ -169,7 +170,11 @@ def train():
             fake_foils = generator(z, conds)
 
             # Evaluate Physics to get R_eps and F_eps indices
-            r_idx, f_idx = evaluate_physics(fake_foils, conds, norm_stats, current_eps)
+            if epoch < pre_train_epoch:
+                r_idx = []
+                f_idx = list(range(batch_size))
+            else:
+                r_idx, f_idx = evaluate_physics(fake_foils, conds, norm_stats, current_eps)
 
             # Split fake_foils
             if len(r_idx) > 0:
@@ -220,7 +225,10 @@ def train():
                 fake_foil = generator(z_gen, conds)
                 
                 # Evaluate to find F_eps for generator optimization
-                _, f_idx_gen = evaluate_physics(fake_foil, conds, norm_stats, current_eps)
+                if epoch < pre_train_epoch:
+                    f_idx_gen = list(range(batch_size))
+                else:
+                    _, f_idx_gen = evaluate_physics(fake_foil, conds, norm_stats, current_eps)
                 
                 if len(f_idx_gen) > 0:
                     f_foil_gen = fake_foil[f_idx_gen]
