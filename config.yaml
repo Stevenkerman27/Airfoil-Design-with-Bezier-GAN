@@ -10,12 +10,13 @@ Re_range_step: [1e5, 6e5, 1e5]
 disc_conv_kernel: 7
 disc_conv_channels: 16
 cond_dim: 4
-lr: 0.0001
-epochs: 100
-pre_train_epoch: 80
+lr: 0.0002
+epochs: 200
+pre_train_epoch: 180
 n_critic: 3
 lambda_gp: 10
 batch_size: 16
 device: cuda  # 设置计算设备: auto (自动选择), cuda, 或 cpu
 eps_start: 0.10
 eps_end: 0.02
+plot_interval: 2

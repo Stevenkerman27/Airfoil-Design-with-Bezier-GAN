@@ -145,6 +145,7 @@ def train():
     # Lists to keep track of progress
     d_losses = []
     g_losses = []
+    validity_history = []
 
     for epoch in range(epochs):
         epoch_d_loss = 0.0
@@ -152,10 +153,14 @@ def train():
         batch_count = 0
         g_batch_count = 0
         
+        total_samples = 0
+        total_valid = 0
+        
         for i, (foils, conds) in enumerate(dataloader):
             foils = foils.to(device)
             conds = conds.to(device)
             batch_size = foils.size(0)
+            total_samples += batch_size
 
             # ---------------------
             #  Train Discriminator
@@ -175,6 +180,7 @@ def train():
                 f_idx = list(range(batch_size))
             else:
                 r_idx, f_idx = evaluate_physics(fake_foils, conds, norm_stats, current_eps)
+                total_valid += len(r_idx)
 
             # Split fake_foils
             if len(r_idx) > 0:
@@ -246,32 +252,49 @@ def train():
                     # All samples physically reasonable, skip generator update
                     pass
                 
-        # Calculate average loss for the epoch
+        # Calculate average loss and validity for the epoch
         avg_d_loss = epoch_d_loss / batch_count
         avg_g_loss = epoch_g_loss / g_batch_count if g_batch_count > 0 else 0
+        avg_validity = total_valid / total_samples
         
         d_losses.append(avg_d_loss)
         g_losses.append(avg_g_loss)
+        validity_history.append(avg_validity)
 
-        if epoch % 10 == 0:
-            print(f"[Epoch {epoch}/{epochs}] [D loss: {avg_d_loss:.4f}] [G loss: {avg_g_loss:.4f}]")
+        if epoch % 5 == 0:
+            print(f"[Epoch {epoch}/{epochs}] [D loss: {avg_d_loss:.4f}] [G loss: {avg_g_loss:.4f}] [Validity: {avg_validity:.2%}]")
 
     # Save models
     torch.save(generator.state_dict(), "model/generator.pth")
     torch.save(discriminator.state_dict(), "model/discriminator.pth")
     print("Training finished and models saved to model/generator.pth and model/discriminator.pth")
 
-    # Plot loss curve
-    plt.figure(figsize=(10, 5))
-    plt.plot(d_losses, label="D Loss")
-    plt.plot(g_losses, label="G Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.legend()
-    plt.grid(True)
+    # Plot and save final results
+    epochs_x = np.arange(len(d_losses))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    fig.tight_layout(pad=5.0)
+
+    # Loss Plot
+    ax1.plot(epochs_x, d_losses, label="D Loss")
+    ax1.plot(epochs_x, g_losses, label="G Loss")
+    ax1.set_title("WGAN-GP Training Loss")
+    ax1.set_xlabel("Epoch")
+    ax1.set_ylabel("Loss")
+    ax1.legend()
+    ax1.grid(True)
+
+    # Validity Plot
+    ax2.plot(epochs_x, validity_history, label="Physics Validity Ratio", color='green')
+    ax2.axhline(y=1.0, color='r', linestyle='--', alpha=0.3)
+    ax2.set_title("Physics Validity Ratio")
+    ax2.set_xlabel("Epoch")
+    ax2.set_ylabel("Ratio")
+    ax2.set_ylim(-0.05, 1.05)
+    ax2.legend()
+    ax2.grid(True)
+
     plt.savefig("model/loss_curve.png")
-    plt.close()
-    print("Loss curve saved to model/loss_curve.png")
+    print("Final training plots saved to model/loss_curve.png")
 
 if __name__ == "__main__":
     train()
