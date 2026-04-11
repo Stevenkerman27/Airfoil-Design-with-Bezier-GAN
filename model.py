@@ -104,7 +104,7 @@ class Generator(nn.Module):
         x = x.view(-1, self.num_cp, 3)
         control_points = x[:, :, :2].clone()
         
-        # Fix the first and last control points to (-1, 0)
+        # Fix the first and last control points to (1, 0)
         fixed_pt = torch.tensor([1.0, 0.0], device=x.device, dtype=x.dtype)
         control_points[:, 0, :] = fixed_pt
         control_points[:, -1, :] = fixed_pt
@@ -121,12 +121,16 @@ class Discriminator(nn.Module):
         self.cond_dim = config.get('cond_dim')
         self.num_pts = config.get('num_output_points')
         self.input_dim = self.num_pts * 2
-        self.hid_node = config.get('gen_hid_node')
-        self.hid_layer = config.get('gen_hid_layer')
+        self.hid_node = config.get('dis_hid_node')
+        self.hid_layer = config.get('dis_hid_layer')
         
         # Conv layer parameters
         self.conv_channels = config.get('disc_conv_channels')
         self.kernel_size = config.get('disc_conv_kernel')
+        
+        self.conv2_kernel = config.get('disc_conv2_kernel', 11)
+        self.conv2_channels = config.get('disc_conv2_channels', 16)
+        self.conv2_stride = config.get('disc_conv2_stride', 3)
         
         # Stage 1: Convolutional Feature Extraction
         self.conv1 = nn.Conv1d(in_channels=2, 
@@ -134,17 +138,27 @@ class Discriminator(nn.Module):
                                kernel_size=self.kernel_size, 
                                padding=self.kernel_size // 2)
         
+        self.conv2 = nn.Conv1d(in_channels=self.conv_channels,
+                               out_channels=self.conv2_channels,
+                               kernel_size=self.conv2_kernel,
+                               stride=self.conv2_stride,
+                               padding=self.conv2_kernel // 2)
+        
         act_fun_name = config.get('gen_hid_fun')
         if act_fun_name in ('LeakyRELU', 'LeakyReLU'):
             act_fun = nn.LeakyReLU(0.2)
         else:
             act_fun = getattr(nn, act_fun_name)()
             
-        layers = []
-        # First FC layer input = (conv_channels * num_pts) + cond_dim
-        in_dim = (self.conv_channels * self.num_pts) + self.cond_dim
+        # Calculate sequence length after conv2
+        # conv1 output length is num_pts (due to padding = kernel // 2, stride = 1)
+        seq_len = (self.num_pts + 2 * (self.conv2_kernel // 2) - self.conv2_kernel) // self.conv2_stride + 1
         
-        # Remaining hidden layers (hid_layer - 1 more since we replaced the first one with Conv)
+        layers = []
+        # First FC layer input = (conv2_channels * seq_len) + cond_dim
+        in_dim = (self.conv2_channels * seq_len) + self.cond_dim
+        
+        # Remaining hidden layers
         for _ in range(self.hid_layer - 1):
             layers.append(nn.Linear(in_dim, self.hid_node))
             layers.append(act_fun)
@@ -158,10 +172,13 @@ class Discriminator(nn.Module):
         batch_size = coords.size(0)
         x = coords.view(batch_size, self.num_pts, 2).permute(0, 2, 1)
         
-        # Conv + Activation
+        # Conv1 + Activation
         x = torch.nn.functional.leaky_relu(self.conv1(x), 0.2)
         
-        # Flatten: (Batch, out_channels, M) -> (Batch, out_channels * M)
+        # Conv2 + Activation
+        x = torch.nn.functional.leaky_relu(self.conv2(x), 0.2)
+        
+        # Flatten: (Batch, out_channels, seq_len) -> (Batch, out_channels * seq_len)
         x = x.view(batch_size, -1)
         
         # Concat with conditions

@@ -68,9 +68,9 @@ def main():
     indices = torch.linspace(0, K - 1, N).long()
     init_cp = target_points[0, indices].clone()
     
-    # Fix start and end points to (-1, 0) as required by the model
-    fixed_start_cp = torch.tensor([[[1.0, 0.0]]], dtype=torch.float32, device=target_points.device) # (1, 1, 2)
-    fixed_end_cp = torch.tensor([[[1.0, 0.0]]], dtype=torch.float32, device=target_points.device) # (1, 1, 2)
+    # Fix start and end points to (1, 0) as required by the model
+    fixed_start_cp = torch.tensor([[[1.0, 0.0]]], dtype=torch.float32, device=target_points.device) # shape: (1, 1, 2)
+    fixed_end_cp = torch.tensor([[[1.0, 0.0]]], dtype=torch.float32, device=target_points.device) # shape: (1, 1, 2)
     
     # Intermediate control points are trainable
     inner_init_cp = init_cp[1:-1, :].unsqueeze(0) # (1, N-2, 2)
@@ -79,7 +79,7 @@ def main():
     # All weights are trainable
     weights = torch.nn.Parameter(torch.ones((1, N), dtype=torch.float32))
     
-    decoder = BezierDecoderLayer('config.yaml')
+    decoder = BezierDecoderLayer(config)
     
     lr = 0.01
     optimizer = optim.Adam([trainable_control_points, weights], lr=lr)

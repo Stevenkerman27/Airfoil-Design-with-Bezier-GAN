@@ -1,18 +1,23 @@
-num_control_points: 50
+num_control_points: 30
 num_output_points: 100
 point_density_beta: 1.25
 noise_dimension: 10
-gen_hid_node: 512
+gen_hid_node: 128
 gen_hid_layer: 2
+dis_hid_node: 256
+dis_hid_layer: 2
 gen_hid_fun: LeakyRELU
 alpha_range_step: [0,8,1]
 Re_range_step: [1e5, 6e5, 1e5]
-disc_conv_kernel: 7
+disc_conv_kernel: 15
 disc_conv_channels: 16
+disc_conv2_kernel: 11
+disc_conv2_channels: 8
+disc_conv2_stride: 3
 cond_dim: 4
 lr: 0.0002
 epochs: 200
-pre_train_epoch: 180
+pre_train_epoch: 200
 n_critic: 3
 lambda_gp: 10
 batch_size: 16
