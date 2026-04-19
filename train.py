@@ -341,8 +341,8 @@ def train(resume_path=None):
         print(f"Skipping pre-training, starting from epoch {start_epoch}")
 
     # Optimizers for formal training
-    optimizer_G = torch.optim.Adam(generator.parameters(), lr=selected_lr, betas=(0.0, 0.9), weight_decay=1e-5)
-    optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=selected_lr, betas=(0.0, 0.9), weight_decay=1e-5)
+    optimizer_G = torch.optim.Adam(generator.parameters(), lr=selected_lr, betas=(0.0, 0.9), weight_decay=5e-5)
+    optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=selected_lr, betas=(0.0, 0.9), weight_decay=5e-5)
     eps_start = config.get('eps_start')
     eps_end = config.get('eps_end')
 
@@ -368,6 +368,15 @@ def train(resume_path=None):
         total_samples = 0
         total_valid = 0
         
+        # Calculate current epsilon for physics evaluation (moved outside batch loop)
+        current_eps = eps_start
+        if epoch >= pre_train_epoch:
+            if epochs > pre_train_epoch + 1:
+                progress = (epoch - pre_train_epoch) / (epochs - pre_train_epoch - 1)
+                current_eps = eps_start - (eps_start - eps_end) * progress
+            else:
+                current_eps = eps_end
+
         for i, (foils, conds) in enumerate(dataloader):
             foils = foils.to(device)
             conds = conds.to(device)
@@ -378,9 +387,6 @@ def train(resume_path=None):
             #  Train Discriminator
             # ---------------------
             optimizer_D.zero_grad()
-
-            # Calculate current epsilon
-            current_eps = eps_start - (eps_start - eps_end) * (epoch / epochs)
 
             # Generate a batch of fake foils
             z = torch.randn(batch_size, config.get('noise_dimension')).to(device)

@@ -5,14 +5,14 @@ import argparse
 from model import Generator, Discriminator
 import numpy as np
 from utils import calculate_relative_thickness
+from foildata.xfoil import run_xfoil_single
 
-def generate_and_evaluate(model_path, tag, user_label_list=None):
-    if user_label_list is None:
-        # 默认的用户自定义标签: [Alpha, Re, Cl, Thickness]
-        user_label_list = [2.0, 200000.0, 0.6, 0.12]
-        
+def generate_and_evaluate(model_path, tag, user_label_list):        
     print(f"\n--- Generating for {tag} using {model_path} ---")
     print(f"User defined label: {user_label_list}")
+    
+    alpha_input = user_label_list[0]
+    re_input = user_label_list[1]
     
     # 读取配置
     config_path = "config.yaml"
@@ -84,6 +84,9 @@ def generate_and_evaluate(model_path, tag, user_label_list=None):
     generated_airfoils = generated_airfoils.view(5, num_output_points, 2).cpu().numpy()
     scores = scores.view(-1).cpu().numpy()
     
+    print(f"{'No.':<4} | {'Score':<8} | {'Thick':<7} | {'CL':<8} | {'CD':<8} | {'CM':<8} | {'Status'}")
+    print("-" * 70)
+    
     for i in range(5):
         score = scores[i]
         airfoil_coords = generated_airfoils[i]
@@ -101,14 +104,26 @@ def generate_and_evaluate(model_path, tag, user_label_list=None):
             for pt in airfoil_coords:
                 f.write(f"{pt[0]:.6f} {pt[1]:.6f}\n")
         
-        print(f"Saved {tag} airfoil {i+1}/5 to {filepath} (Thickness: {thickness:.4f}, Score: {score:.4f})")
+        # 调用 XFOIL 进行气动分析
+        xfoil_res = run_xfoil_single(airfoil_coords, re_input, alpha_input, return_all=True)
+        
+        if xfoil_res:
+            cl = xfoil_res.get('CL', np.nan)
+            cd = xfoil_res.get('CD', np.nan)
+            cm = xfoil_res.get('CM', np.nan)
+            status = "Success"
+        else:
+            cl = cd = cm = np.nan
+            status = "Failed"
+            
+        print(f"{i+1:<4} | {score:8.4f} | {thickness:7.4f} | {cl:8.4f} | {cd:8.5f} | {cm:8.4f} | {status}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Generate airfoils using Pre-train and PG models")
     parser.add_argument("--labels", "-l", type=float, nargs=4, help="Labels: Alpha Re Cl Thickness")
     args = parser.parse_args()
     
-    custom_label = args.labels if args.labels else [5.0, 400000.0, 0.8, 0.15]
+    custom_label = args.labels if args.labels else [2.0, 200000.0, 0.6, 0.12]
     
     # 分别为预训练模型和最终模型生成结果
     generate_and_evaluate('model/pre_train.pt', 'PRE', user_label_list=custom_label)

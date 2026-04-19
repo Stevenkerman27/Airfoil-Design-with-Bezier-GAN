@@ -95,10 +95,11 @@ def run_xfoil(airfoil_name, reynolds, alpha_start, alpha_end, alpha_step):
         
     return stdout
 
-def run_xfoil_single(coords, reynolds, alpha, timeout=3):
+def run_xfoil_single(coords, reynolds, alpha, timeout=3, return_all=False):
     """
     Evaluates a single airfoil using Xfoil.
-    Returns the Cl value if successful, or None if it fails to converge.
+    Returns the Cl value if successful (or a dict of CL, CD, CM if return_all=True), 
+    or None if it fails to converge.
     """
     import tempfile
     import uuid
@@ -132,13 +133,50 @@ def run_xfoil_single(coords, reynolds, alpha, timeout=3):
         if is_timeout:
             return None
             
-        # Parse output for Cl
+        # Parse output for Cl, Cd, Cm
+        # XFOIL 6.99 output format:
+        #        a =  2.000      CL =  0.5121
+        #       Cm = -0.0611     CD =  0.00991   =>   CDf =  0.00608    CDp =  0.00383
+        
+        res = {}
         for line in reversed(stdout.split('\n')):
-            if 'a =' in line and 'CL =' in line:
-                parts = line.split()
+            line_upper = line.upper()
+            parts = line.split()
+            
+            # Look for CD and Cm (usually on one line)
+            if 'CD =' in line_upper or 'CM =' in line_upper:
                 try:
-                    cl_idx = parts.index('CL') + 2 # usually 'CL = 0.5000'
-                    return float(parts[cl_idx])
+                    # Handle both CD and CD = 
+                    if 'CD' in parts:
+                        res['CD'] = float(parts[parts.index('CD') + 2])
+                    elif 'CD=' in parts:
+                        res['CD'] = float(parts[parts.index('CD=') + 1])
+                        
+                    if 'Cm' in parts:
+                        res['CM'] = float(parts[parts.index('Cm') + 2])
+                    elif 'Cm=' in parts:
+                        res['CM'] = float(parts[parts.index('Cm=') + 1])
+                    elif 'CM' in parts:
+                        res['CM'] = float(parts[parts.index('CM') + 2])
+                except (ValueError, IndexError):
+                    pass
+            
+            # Look for CL and alpha (usually on the preceding line in the output, 
+            # so following line when reading reversed)
+            if 'CL =' in line_upper:
+                try:
+                    if 'CL' in parts:
+                        res['CL'] = float(parts[parts.index('CL') + 2])
+                    elif 'CL=' in parts:
+                        res['CL'] = float(parts[parts.index('CL=') + 1])
+                    
+                    if not return_all:
+                        if 'CL' in res:
+                            return res['CL']
+                    else:
+                        # If we found CL, we assume this is the most recent converged point
+                        if 'CL' in res:
+                            return res
                 except (ValueError, IndexError):
                     pass
         return None

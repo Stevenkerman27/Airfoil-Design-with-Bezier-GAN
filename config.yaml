@@ -16,12 +16,12 @@ disc_conv2_channels: 8
 disc_conv2_stride: 3
 cond_dim: 4
 lr: 0.0002
-epochs: 250
+epochs: 230
 pre_train_epoch: 200
 n_critic: 3
 lambda_gp: 10
 batch_size: 16
 device: cuda  # 设置计算设备: auto (自动选择), cuda, 或 cpu
-eps_start: 0.5
+eps_start: 0.2
 eps_end: 0.05
 plot_interval: 2
