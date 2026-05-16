@@ -16,15 +16,17 @@ disc_conv2_stride: 3
 cond_dim: 4
 lr: 2e-4
 lr_phase2: 1e-4
-epochs: 240
+epochs: 260
 pre_train_epoch: 200
 n_critic: 3
 lambda_gp: 10
 batch_size: 16
 device: cuda  # 设置计算设备: auto (自动选择), cuda, 或 cpu
 max_workers: 16
-eps_cl_start: 0.08
-eps_cl_end: 0.03
-eps_t_start: 0.04
+eps_cl_start: 0.1
+eps_cl_end: 0.05
+eps_t_start: 0.02
 eps_t_end: 0.02
 plot_interval: 2
+cl_noise_std: 0.1  # 升力系数生成时的随机噪声标准差
+eval_var_weight: 0.05  # 评估时不准确度计算中方差项的权重系数

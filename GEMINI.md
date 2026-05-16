@@ -13,7 +13,7 @@ Chinese character involved in this project, mind encoding!
 常量、魔术字符串, 数据库 Schema 必须定义在集中配置文件中
 
 3. Fail-Fast 机制暴露错误
-当前不是高可靠性要求的生产环境，不要过度防御性编程，如不使用 config.get('max_workers', 4)的默认参数，让潜在的错误直接通过报错暴露出来
+禁止过度防御性编程，不使用 config.get('max_workers', 4)的默认参数，必须让潜在的错误直接通过报错暴露出来
 
 Draw.io画图规范:
 绘制神经网络时，输入放在左侧，输出放在右侧，横向排列。神经网络用圆角矩形表示，矩形内部用箭头连接的横向排列的圆角矩形代表每一层的配置，如激活函数，神经元数量，层类型，属性等。不写concat和reshape等格式操作。
