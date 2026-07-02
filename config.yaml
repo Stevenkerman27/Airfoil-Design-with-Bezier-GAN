@@ -20,9 +20,12 @@ epochs: 260
 pre_train_epoch: 200
 n_critic: 3
 lambda_gp: 10
+lambda_phys_d: 5.0
+lambda_phys_g: 5.0
 batch_size: 16
 device: cuda  # 设置计算设备: auto (自动选择), cuda, 或 cpu
 max_workers: 16
+max_Cd:
 eps_cl_start: 0.1
 eps_cl_end: 0.05
 eps_t_start: 0.02

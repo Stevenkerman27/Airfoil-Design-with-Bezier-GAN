@@ -23,9 +23,10 @@ def test_discriminator_forward():
     coords = torch.randn(batch_size, 100 * 2)
     cond = torch.randn(batch_size, 4)
     
-    output = model(coords, cond)
+    output, phys_err = model(coords, cond)
     
     assert output.shape == (batch_size, 1), f"Expected shape (4, 1), got {output.shape}"
+    assert phys_err.shape == (batch_size, 1), f"Expected shape (4, 1), got {phys_err.shape}"
 
 if __name__ == "__main__":
     test_discriminator_forward()

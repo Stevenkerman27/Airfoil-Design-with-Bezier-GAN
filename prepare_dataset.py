@@ -77,8 +77,8 @@ def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset
         # 读取翼型坐标 (跳过第一行标题)
         try:
             coords = np.loadtxt(foil_path, skiprows=1)
-        except Exception:
-            continue
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Failed to load coordinate file: {foil_path}") from exc
             
         # 读取 polar 数据
         try:
@@ -151,7 +151,7 @@ if __name__ == '__main__':
     
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
-        max_cd = config.get('max_Cd') # CD threshold can be optional
+        max_cd = config['max_Cd'] # CD threshold can be optional
         if max_cd is not None:
             print(f"将过滤 CD > {max_cd} 的数据")
 

@@ -199,7 +199,7 @@ if __name__ == "__main__":
     config = load_config()
     
     # Alpha parameters
-    alpha_cfg = config.get('alpha_range_step', [0, 8, 1])
+    alpha_cfg = config['alpha_range_step']
     a_start, a_end, a_step = alpha_cfg
     
     # Reynolds numbers
@@ -218,7 +218,7 @@ if __name__ == "__main__":
     print(f"Selected {len(selected_foils)} airfoils for analysis.")
     print(f"Reynolds numbers: {re_list}")
 
-    max_workers = config.get('max_workers')
+    max_workers = config['max_workers']
     tasks = []
     for foil in selected_foils:
         for re in re_list:

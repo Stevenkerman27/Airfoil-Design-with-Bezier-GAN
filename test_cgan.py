@@ -23,7 +23,7 @@ def generate_and_evaluate(model_path, tag, user_label_list):
         config = yaml.safe_load(f)
         
     # 初始化设备
-    device_cfg = config.get("device", "auto")
+    device_cfg = config["device"]
     if device_cfg.lower() == "cuda" and torch.cuda.is_available():
         device = torch.device("cuda")
     elif device_cfg.lower() == "cpu":
@@ -75,7 +75,7 @@ def generate_and_evaluate(model_path, tag, user_label_list):
     cond = cond.expand(NUM_GENERATE, -1)
     
     # 随机生成噪声
-    noise_dim = config.get('noise_dimension', 10)
+    noise_dim = config['noise_dimension']
     # CGAN-GP 常见情况下，噪声可能是从标准正态分布采样
     noise = torch.randn(NUM_GENERATE, noise_dim).to(device)
     
@@ -87,9 +87,9 @@ def generate_and_evaluate(model_path, tag, user_label_list):
     # 生成翼型和打分
     with torch.no_grad():
         generated_airfoils = generator(noise, cond) # (NUM_GENERATE, M*2)
-        scores = discriminator(generated_airfoils, cond) # (NUM_GENERATE, 1)
+        scores, _ = discriminator(generated_airfoils, cond) # (NUM_GENERATE, 1)
         
-    num_output_points = config.get('num_output_points', 60)
+    num_output_points = config['num_output_points']
     
     # 转换为 (Batch, Points, 2) 格式
     generated_airfoils = generated_airfoils.view(NUM_GENERATE, num_output_points, 2)

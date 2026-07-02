@@ -147,8 +147,8 @@ def evaluate_model(model_path, tag, config, device, cond_mean, cond_std, coord_n
     y_max = coord_norm_stats['y_max'].to(device)
 
     # Generate LHS samples for Alpha, Re, Thickness (3D)
-    alpha_range = config.get('alpha_range_step')
-    re_range = config.get('Re_range_step')
+    alpha_range = config['alpha_range_step']
+    re_range = config['Re_range_step']
     
     # [Alpha, Re, Thickness]
     bounds_3d = np.array([
@@ -162,7 +162,7 @@ def evaluate_model(model_path, tag, config, device, cond_mean, cond_std, coord_n
     scaled_samples = qmc.scale(sample, bounds_3d[:, 0], bounds_3d[:, 1])
 
     # Calculate CL and construct 4D conditions: [Alpha, Re, CL, Thickness]
-    cl_noise_std = config.get('cl_noise_std')
+    cl_noise_std = config['cl_noise_std']
     cond_samples = []
     for s in scaled_samples:
         alpha_input, re_input, target_thick = s
@@ -248,7 +248,7 @@ def evaluate_model(model_path, tag, config, device, cond_mean, cond_std, coord_n
     # Process results back into heatmaps data
     results_alpha, results_re = [], []
     results_thick_inacc, results_cl_inacc = [], []
-    var_weight = config.get('eval_var_weight')
+    var_weight = config['eval_var_weight']
     
     for i in range(n_cond):
         batch = results_by_cond[i]
@@ -315,7 +315,7 @@ if __name__ == '__main__':
     with open("config.yaml", 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
         
-    device_cfg = config.get("device")
+    device_cfg = config["device"]
     if device_cfg.lower() == "cuda" and torch.cuda.is_available():
         device = torch.device("cuda")
     elif device_cfg.lower() == "cpu":

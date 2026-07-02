@@ -25,7 +25,7 @@ def compute_gradient_penalty(D, real_samples, fake_samples, conds, device):
     # Get random interpolation between real and fake samples
     interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
     
-    d_interpolates = D(interpolates, conds)
+    d_interpolates, _ = D(interpolates, conds)
     
     fake = torch.ones(real_samples.size(0), 1).to(device)
     
@@ -47,61 +47,51 @@ def compute_gradient_penalty(D, real_samples, fake_samples, conds, device):
 import concurrent.futures
 
 def _evaluate_single(args):
-    """Worker function to evaluate a single airfoil."""
-    i, coords, alpha, reynolds, target_cl, target_t, eps_cl, eps_t = args
+    """Worker function to evaluate a single airfoil and return its physical error."""
+    i, coords, alpha, reynolds, target_cl, target_t = args
 
     # Quick geometric bounds check
     x = coords[:, 0]
     y = coords[:, 1]
-    
+
     # 1. x bounds (must be roughly in [0, 1], with some tolerance for Bezier curve overshoots)
     if np.any(x < -0.1) or np.any(x > 1.2):
-        return i, False
-        
+        return i, 2.0  # High penalty
+
     # 2. y bounds (airfoils thicker than ~40% (y = +/-0.2) are extremely rare and likely unrealistic)
     if np.any(np.abs(y) > 0.2):
-        return i, False
+        return i, 2.0
 
     # Check for self-intersection and shape constraints
     if check_intersection(coords) or check_shape_intersections(coords):
-        return i, False
-    
+        return i, 2.0
+
     # Calculate thickness
     calc_t = calculate_relative_thickness(coords)
     t_res = abs(calc_t - target_t) / (abs(target_t) + 1e-8)
-    
-    if t_res > eps_t:
-        return i, False
-        
+
     # Calculate Cl via Xfoil
     xfoil_res = run_xfoil_single(coords, reynolds, alpha, return_all=True)
     if xfoil_res is None:
-        return i, False
-        
+        return i, 2.0
+
     calc_cl = xfoil_res.get('CL', np.nan)
     calc_cd = xfoil_res.get('CD', np.nan)
     calc_cm = xfoil_res.get('CM', np.nan)
-    
-    if np.isnan(calc_cl) or np.isnan(calc_cd) or np.isnan(calc_cm):
-        return i, False
-        
-    cl_res = abs(calc_cl - target_cl) / (abs(target_cl) + 1e-8)
-    
-    if cl_res <= eps_cl:
-        return i, True
-    else:
-        return i, False
 
-def evaluate_physics(fake_foils, conds, norm_stats, coord_norm_stats, eps_cl, eps_t, max_workers=16):
+    if np.isnan(calc_cl) or np.isnan(calc_cd) or np.isnan(calc_cm):
+        return i, 2.0
+
+    cl_res = abs(calc_cl - target_cl) / (abs(target_cl) + 1e-8)
+
+    total_err = cl_res + t_res
+    return i, min(total_err, 2.0)
+def evaluate_physics(fake_foils, conds, norm_stats, coord_norm_stats, max_workers=16):
     """
-    Evaluates generated foils using physics models.
-    Splits indices into R_eps (reasonable) and F_eps (unreasonable).
-    Uses ThreadPoolExecutor to evaluate multiple foils concurrently.
+    Evaluates generated foils using XFOIL and returns continuous physical errors.
     """
     batch_size = fake_foils.size(0)
     num_pts = fake_foils.size(1) // 2
-    r_idx = []
-    f_idx = []
     
     # Un-normalize conditions: [alpha, Re, CL, Thickness]
     y_mean = norm_stats['mean'].to(conds.device)
@@ -133,19 +123,17 @@ def evaluate_physics(fake_foils, conds, norm_stats, coord_norm_stats, eps_cl, ep
         target_cl = real_conds_np[i, 2].item()
         target_t = real_conds_np[i, 3].item()
         
-        eval_args.append((i, coords_np, alpha, reynolds, target_cl, target_t, eps_cl, eps_t))
+        eval_args.append((i, coords_np, alpha, reynolds, target_cl, target_t))
 
     # Run evaluations concurrently
+    real_errs = [2.0] * batch_size # Default to high penalty
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(_evaluate_single, eval_args))
         
-    for idx, is_reasonable in results:
-        if is_reasonable:
-            r_idx.append(idx)
-        else:
-            f_idx.append(idx)
+    for idx, err in results:
+        real_errs[idx] = err
             
-    return r_idx, f_idx
+    return torch.tensor(real_errs, dtype=torch.float32, device=fake_foils.device).view(-1, 1)
 
 def save_checkpoint(generator, discriminator, epoch, path):
     checkpoint = {
@@ -216,8 +204,8 @@ def run_lr_range_test(config, dataloader, device, generator=None, discriminator=
     if total_steps <= 1:
         total_steps = 2
         
-    lambda_gp = config.get('lambda_gp')
-    n_critic = config.get('n_critic')
+    lambda_gp = config['lambda_gp']
+    n_critic = config['n_critic']
     
     # 采用指数级（按倍数）增长
     lr_mult = (lr_end / lr_start) ** (1 / total_steps)
@@ -243,11 +231,11 @@ def run_lr_range_test(config, dataloader, device, generator=None, discriminator=
         
         # --- Train Discriminator ---
         optimizer_D.zero_grad()
-        z = torch.randn(batch_size, config.get('noise_dimension')).to(device)
+        z = torch.randn(batch_size, config['noise_dimension']).to(device)
         fake_foils = generator(z, conds)
         
-        real_validity = discriminator(foils, conds)
-        fake_validity = discriminator(fake_foils.detach(), conds)
+        real_validity, _ = discriminator(foils, conds)
+        fake_validity, _ = discriminator(fake_foils.detach(), conds)
         
         gradient_penalty, _ = compute_gradient_penalty(
             discriminator, foils, fake_foils.detach(), conds, device
@@ -277,9 +265,9 @@ def run_lr_range_test(config, dataloader, device, generator=None, discriminator=
         # 遵循 n_critic 设定
         if i % n_critic == 0:
             optimizer_G.zero_grad()
-            z_gen = torch.randn(batch_size, config.get('noise_dimension')).to(device)
+            z_gen = torch.randn(batch_size, config['noise_dimension']).to(device)
             fake_foil_gen = generator(z_gen, conds)
-            fake_validity_gen = discriminator(fake_foil_gen, conds)
+            fake_validity_gen, _ = discriminator(fake_foil_gen, conds)
             g_loss = -torch.mean(fake_validity_gen)
             g_loss.backward()
             optimizer_G.step()
@@ -322,7 +310,7 @@ def run_lr_range_test(config, dataloader, device, generator=None, discriminator=
             if final_lr > 0:
                 break
         except ValueError:
-            pass
+            continue
             
     if restore_state:
         generator.load_state_dict(gen_state)
@@ -369,7 +357,7 @@ def train(resume_path=None):
         print(f"Loading pre-trained model from {resume_path}")
         checkpoint = torch.load(resume_path, map_location=device, weights_only=True)
         generator.load_state_dict(checkpoint['generator_state_dict'])
-        discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+        discriminator.load_state_dict(checkpoint['discriminator_state_dict'], strict=False)
         # Jump to physics training phase
         start_epoch = pre_train_epoch
         print(f"Skipping pre-training, starting from epoch {start_epoch}")
@@ -401,7 +389,7 @@ def train(resume_path=None):
     import time
     for epoch in range(start_epoch, epochs):
         if epoch == pre_train_epoch:
-            phase2_lr = float(config.get('lr_phase2', 0.0))
+            phase2_lr = float(config['lr_phase2'])
             if phase2_lr <= 0.0:
                 print("\n--- Transitioning to Phase 2, determining learning rate ---")
                 phase2_lr = run_lr_range_test(config, dataloader, device, generator=generator, discriminator=discriminator, phase=2)
@@ -424,7 +412,7 @@ def train(resume_path=None):
         total_samples = 0
         total_valid = 0
         
-        # Calculate current epsilons for physics evaluation
+        # Calculate current epsilons for physics evaluation (only used for logging validity rate now)
         curr_eps_cl = eps_cl_start
         curr_eps_t = eps_t_start
         if epoch >= pre_train_epoch:
@@ -448,66 +436,41 @@ def train(resume_path=None):
             optimizer_D.zero_grad()
 
             # Generate a batch of fake foils
-            z = torch.randn(batch_size, config.get('noise_dimension')).to(device)
+            z = torch.randn(batch_size, config['noise_dimension']).to(device)
             fake_foils = generator(z, conds)
 
-            # Evaluate Physics to get R_eps and F_eps indices
-            if epoch < pre_train_epoch:
-                r_idx = []
-                f_idx = list(range(batch_size))
+            # Evaluate Physics to get continuous error for fake foils
+            if epoch >= pre_train_epoch:
+                real_errs = evaluate_physics(fake_foils, conds, norm_stats, coord_norm_stats, max_workers=max_workers)
+                # Keep tracking validity just for logs
+                total_valid += torch.sum(real_errs < (curr_eps_cl + curr_eps_t)).item()
             else:
-                r_idx, f_idx = evaluate_physics(fake_foils, conds, norm_stats, coord_norm_stats, curr_eps_cl, curr_eps_t, max_workers=max_workers)
-                total_valid += len(r_idx)
+                real_errs = torch.zeros((batch_size, 1)).to(device)
 
-            # Split fake_foils
-            if len(r_idx) > 0:
-                r_foils = fake_foils[r_idx].detach()
-                r_conds = conds[r_idx]
-                combined_real_foils = torch.cat([foils, r_foils], dim=0)
-                combined_real_conds = torch.cat([conds, r_conds], dim=0)
-            else:
-                combined_real_foils = foils
-                combined_real_conds = conds
+            real_validity, _ = discriminator(foils, conds)
+            fake_validity, fake_pred_err = discriminator(fake_foils.detach(), conds)
 
-            if len(f_idx) > 0:
-                f_foils = fake_foils[f_idx].detach()
-                f_conds = conds[f_idx]
-            else:
-                # If no unreasonable foils, it means the generator is performing perfectly for this batch
-                print("\n[Early Stopping] No unreasonable airfoils found in discriminator step. Training complete.")
-                save_checkpoint(generator, discriminator, epoch, "model/gan_final.pt")
-                plot_metrics(d_losses, g_losses, real_scores, fake_scores, grad_norms, "model/loss_curve.png")
-                sys.exit(0)
-
-            real_validity = discriminator(combined_real_foils, combined_real_conds)
-            fake_validity = discriminator(f_foils, f_conds)
-            
-            # Gradient penalty
-            if epoch < pre_train_epoch:
-                # Phase 1: Standard GP on full batch
-                gradient_penalty, grad_norm = compute_gradient_penalty(
-                    discriminator, 
-                    foils, 
-                    fake_foils.detach(),
-                    conds, 
-                    device
-                )
-            else:
-                # Phase 2: Targeted GP on matching real-fake pairs
-                gradient_penalty, grad_norm = compute_gradient_penalty(
-                    discriminator, 
-                    foils[f_idx], 
-                    f_foils,
-                    conds[f_idx], 
-                    device
-                )
+            # Gradient penalty (Always standard GP on full batch now)
+            gradient_penalty, grad_norm = compute_gradient_penalty(
+                discriminator,
+                foils,
+                fake_foils.detach(),
+                conds,
+                device
+            )
 
             # Adversarial loss
-            d_loss = -torch.mean(real_validity) + torch.mean(fake_validity) + lambda_gp * gradient_penalty
+            d_loss = -torch.mean(real_validity) + torch.mean(fake_validity) + lambda_gp * gradient_penalty      
+
+            # Physics continuous prediction loss
+            if epoch >= pre_train_epoch:
+                lambda_phys_d = config['lambda_phys_d']
+                mse_loss = torch.nn.MSELoss()(fake_pred_err, real_errs)
+                d_loss += lambda_phys_d * mse_loss
 
             d_loss.backward()
             optimizer_D.step()
-            
+
             epoch_d_loss += d_loss.item()
             epoch_real_score += torch.mean(real_validity).item()
             epoch_fake_score += torch.mean(fake_validity).item()
@@ -520,36 +483,21 @@ def train(resume_path=None):
             if i % n_critic == 0:
                 optimizer_G.zero_grad()
 
-                z_gen = torch.randn(batch_size, config.get('noise_dimension')).to(device)
+                z_gen = torch.randn(batch_size, config['noise_dimension']).to(device)
                 fake_foil = generator(z_gen, conds)
-                
-                # Evaluate to find F_eps for generator optimization
-                if epoch < pre_train_epoch:
-                    f_idx_gen = list(range(batch_size))
-                else:
-                    _, f_idx_gen = evaluate_physics(fake_foil, conds, norm_stats, coord_norm_stats, curr_eps_cl, curr_eps_t, max_workers=max_workers)
-                
-                if len(f_idx_gen) > 0:
-                    f_foil_gen = fake_foil[f_idx_gen]
-                    f_conds_gen = conds[f_idx_gen]
-                    
-                    fake_validity_gen = discriminator(f_foil_gen, f_conds_gen)
-                    g_loss = -torch.mean(fake_validity_gen)
 
-                    g_loss.backward()
-                    optimizer_G.step()
-                    
-                    epoch_g_loss += g_loss.item()
-                    g_batch_count += 1
-                else:
-                    # All samples physically reasonable, terminate training as the goal is reached
-                    print("\n[Early Stopping] All generated samples are physically reasonable. Training complete.")
-                    # Save final models before exiting
-                    save_checkpoint(generator, discriminator, epoch, "model/gan_final.pt")
-                    plot_metrics(d_losses, g_losses, real_scores, fake_scores, grad_norms, "model/loss_curve.png")
-                    import sys
-                    sys.exit(0)
-                
+                fake_validity_gen, fake_pred_err_gen = discriminator(fake_foil, conds)
+                g_loss = -torch.mean(fake_validity_gen)
+
+                if epoch >= pre_train_epoch:
+                    lambda_phys_g = config['lambda_phys_g']
+                    g_loss += lambda_phys_g * torch.mean(fake_pred_err_gen)
+
+                g_loss.backward()
+                optimizer_G.step()
+
+                epoch_g_loss += g_loss.item()
+                g_batch_count += 1                
         # Calculate average loss and validity for the epoch
         avg_d_loss = epoch_d_loss / batch_count
         avg_g_loss = epoch_g_loss / g_batch_count if g_batch_count > 0 else 0
