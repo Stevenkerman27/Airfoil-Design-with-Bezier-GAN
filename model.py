@@ -171,16 +171,7 @@ class Discriminator(nn.Module):
             
         self.shared_fc = nn.Sequential(*layers)
         
-        # WGAN-GP Validity Branch
-        self.adv_layer = nn.Linear(self.hid_node, 1)
-        
-        # Auxiliary Continuous Physical Error Regression Branch
-        self.phys_layer = nn.Sequential(
-            nn.Linear(self.hid_node, self.hid_node // 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Linear(self.hid_node // 2, 1),
-            nn.Softplus() # Error is always positive
-        )
+        self.adv_layer = nn.Linear(in_dim, 1)
 
     def forward(self, coords, cond):
         # coords: (Batch, M*2) -> (Batch, M, 2) -> (Batch, 2, M)
@@ -204,6 +195,56 @@ class Discriminator(nn.Module):
         
         # Outputs
         validity = self.adv_layer(features)
-        phys_err = self.phys_layer(features)
-        
-        return validity, phys_err
+        return validity
+
+class AerodynamicSurrogate(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.cond_dim = config['surrogate_cond_dim']
+        self.out_dim = config['surrogate_out_dim']
+        self.num_pts = config['num_output_points']
+        self.hid_node = config['surrogate_hid_node']
+        self.hid_layer = config['surrogate_hid_layer']
+
+        self.conv_channels = config['disc_conv_channels']
+        self.kernel_size = config['disc_conv_kernel']
+        self.conv2_kernel = config['disc_conv2_kernel']
+        self.conv2_channels = config['disc_conv2_channels']
+        self.conv2_stride = config['disc_conv2_stride']
+
+        self.conv1 = nn.Conv1d(
+            in_channels=2,
+            out_channels=self.conv_channels,
+            kernel_size=self.kernel_size,
+            padding=self.kernel_size // 2,
+        )
+        self.conv2 = nn.Conv1d(
+            in_channels=self.conv_channels,
+            out_channels=self.conv2_channels,
+            kernel_size=self.conv2_kernel,
+            stride=self.conv2_stride,
+            padding=self.conv2_kernel // 2,
+        )
+
+        seq_len = (self.num_pts + 2 * (self.conv2_kernel // 2) - self.conv2_kernel) // self.conv2_stride + 1
+        in_dim = (self.conv2_channels * seq_len) + self.cond_dim
+
+        act_fun = nn.LeakyReLU(0.2)
+        layers = []
+        for _ in range(self.hid_layer):
+            layers.append(nn.Linear(in_dim, self.hid_node))
+            layers.append(act_fun)
+            in_dim = self.hid_node
+
+        self.fc_blocks = nn.Sequential(*layers)
+        self.out_layer = nn.Linear(in_dim, self.out_dim)
+
+    def forward(self, coords, conditions):
+        batch_size = coords.size(0)
+        x = coords.view(batch_size, self.num_pts, 2).permute(0, 2, 1)
+        x = torch.nn.functional.leaky_relu(self.conv1(x), 0.2)
+        x = torch.nn.functional.leaky_relu(self.conv2(x), 0.2)
+        x = x.view(batch_size, -1)
+        x = torch.cat([x, conditions], dim=1)
+        x = self.fc_blocks(x)
+        return self.out_layer(x)

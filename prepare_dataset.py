@@ -8,19 +8,20 @@ from utils import calculate_relative_thickness
 
 def plot_label_statistics(data_list, output_path="model/label_statistics.png"):
     """
-    绘制 CL, Thickness 的箱线图，并叠加所有原始数据点。
+    绘制 CL, Thickness, CM, CD 的箱线图，并叠加所有原始数据点。
     """
     if not data_list:
         print("警告: 数据集为空，跳过统计图绘制。")
         return
         
     y_labels = torch.stack([d["y"] for d in data_list]).numpy()
-    coeffs = y_labels[:, 2:] 
-    label_names = ['CL', 'Thickness']
+    cd_values = np.array([d["cd"] for d in data_list], dtype=np.float32).reshape(-1, 1)
+    coeffs = np.concatenate([y_labels[:, 2:], cd_values], axis=1)
+    label_names = ['CL', 'Thickness', 'CM', 'CD']
     
-    plt.figure(figsize=(12, 6))
-    for i in range(2):
-        plt.subplot(1, 2, i+1)
+    plt.figure(figsize=(24, 6))
+    for i, label_name in enumerate(label_names):
+        plt.subplot(1, len(label_names), i + 1)
         
         # 1. 绘制箱线图 (关闭离群点显示 showfliers=False，因为我们要手动画所有点)
         plt.boxplot(coeffs[:, i], widths=0.5, showfliers=False, 
@@ -34,7 +35,7 @@ def plot_label_statistics(data_list, output_path="model/label_statistics.png"):
         # s 是点的大小，alpha 是透明度（数据多时建议调低），c 是颜色
         plt.scatter(x_jitter, coeffs[:, i], s=1, alpha=0.3, c='blue', label='Data Points')
         
-        plt.title(label_names[i])
+        plt.title(label_name)
         plt.grid(True, linestyle='--', alpha=0.5)
         
     plt.tight_layout()
@@ -44,7 +45,8 @@ def plot_label_statistics(data_list, output_path="model/label_statistics.png"):
 
 def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset.pt", max_cd=None):
     """
-    读取翼型坐标文件和极曲线数据，将坐标点展平为 1D 特征张量,并提取对应的气动参数（alpha, Re, CL, CD, CM）作为 1D 标签向量。
+    读取翼型坐标文件和极曲线数据，将坐标点展平为 1D 特征张量，
+    并提取对应的条件标签 [alpha, Re, CL, Thickness, CM]。
     """
     data_list = []
     
@@ -111,7 +113,7 @@ def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset
                 alpha = float(vals[0])
                 CL = float(vals[1])
                 CD = float(vals[2])
-                # CM = float(vals[4]) # No longer used as condition
+                CM = float(vals[4])
             except ValueError:
                 continue
 
@@ -126,13 +128,14 @@ def prepare_dataset(processed_foil_dir, polars_dir, output_file="airfoil_dataset
             coords_flat = coords.flatten()
             x_tensor = torch.tensor(coords_flat, dtype=torch.float32)
             
-            # 标签：alpha, Re, CL, Thickness (1D 张量)
-            y_tensor = torch.tensor([alpha, Re, CL, thickness], dtype=torch.float32)
+            # 标签：alpha, Re, CL, Thickness, CM (1D 张量)
+            y_tensor = torch.tensor([alpha, Re, CL, thickness, CM], dtype=torch.float32)
             
             # 保存到数据集列表中
             data_list.append({
-                "x": x_tensor,            # [x1, x2, ..., y1, y2, ...]
-                "y": y_tensor             # [alpha, Re, CL, Thickness]
+                "x": x_tensor,            # [x1, y1, x2, y2, ...]
+                "y": y_tensor,            # [alpha, Re, CL, Thickness, CM]
+                "cd": CD
             })
             
     print(f"\n数据集准备完成！总共收集了 {len(data_list)} 个样本。")

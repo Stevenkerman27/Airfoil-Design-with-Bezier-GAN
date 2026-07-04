@@ -7,10 +7,9 @@ import numpy as np
 from utils import calculate_relative_thickness
 from foildata.xfoil import run_xfoil_single
 
-# 生成翼型的数量
 NUM_GENERATE = 10
 
-def generate_and_evaluate(model_path, tag, user_label_list):        
+def generate_and_evaluate(model_path, tag, user_label_list):
     print(f"\n--- Generating for {tag} using {model_path} ---")
     print(f"User defined label: {user_label_list}")
     
@@ -87,7 +86,7 @@ def generate_and_evaluate(model_path, tag, user_label_list):
     # 生成翼型和打分
     with torch.no_grad():
         generated_airfoils = generator(noise, cond) # (NUM_GENERATE, M*2)
-        scores, _ = discriminator(generated_airfoils, cond) # (NUM_GENERATE, 1)
+        scores = discriminator(generated_airfoils, cond) # (NUM_GENERATE, 1)
         
     num_output_points = config['num_output_points']
     
@@ -103,12 +102,14 @@ def generate_and_evaluate(model_path, tag, user_label_list):
     
     target_cl = user_label_list[2]
     target_thick = user_label_list[3]
+    target_cm = user_label_list[4]
     
     thick_errs = []
     cl_errs = []
+    cm_errs = []
     
-    print(f"{'No.':<4} | {'Score':<8} | {'Thick':<7} | {'T_Err%':<8} | {'CL':<8} | {'CL_Err%':<8} | {'CD':<8} | {'CM':<8} | {'Status'}")
-    print("-" * 95)
+    print(f"{'No.':<4} | {'Score':<8} | {'Thick':<7} | {'T_Err%':<8} | {'CL':<8} | {'CL_Err%':<8} | {'CM':<8} | {'CM_Err%':<8} | {'CD':<8} | {'Status'}")
+    print("-" * 112)
     
     for i in range(NUM_GENERATE):
         score = scores[i]
@@ -130,10 +131,13 @@ def generate_and_evaluate(model_path, tag, user_label_list):
             cl_errs.append(abs(cl_err))
             cd = xfoil_res.get('CD', np.nan)
             cm = xfoil_res.get('CM', np.nan)
+            cm_err = (cm - target_cm) / target_cm * 100
+            cm_errs.append(abs(cm_err))
             status = "Success"
         else:
             cl = cd = cm = np.nan
             cl_err = np.nan
+            cm_err = np.nan
             status = "Failed"
             
         # 按照要求格式命名文件：type_Score_Thickness_Cl_Cd_Cm
@@ -146,22 +150,23 @@ def generate_and_evaluate(model_path, tag, user_label_list):
             for pt in airfoil_coords:
                 f.write(f"{pt[0]:.6f} {pt[1]:.6f}\n")
         
-        print(f"{i+1:<4} | {score:8.4f} | {thickness:7.4f} | {thick_err:7.2f}% | {cl:8.4f} | {cl_err:7.2f}% | {cd:8.5f} | {cm:8.4f} | {status}")
+        print(f"{i+1:<4} | {score:8.4f} | {thickness:7.4f} | {thick_err:7.2f}% | {cl:8.4f} | {cl_err:7.2f}% | {cm:8.4f} | {cm_err:7.2f}% | {cd:8.5f} | {status}")
         
     # 计算总体误差 (MAE)
     avg_thick_err = np.mean(thick_errs)
     avg_cl_err = np.mean(cl_errs) if cl_errs else np.nan
+    avg_cm_err = np.mean(cm_errs) if cm_errs else np.nan
     
-    print("-" * 95)
-    print(f"Overall Batch MAE: Thickness Error: {avg_thick_err:.2f}%, CL Error: {avg_cl_err:.2f}%")
+    print("-" * 112)
+    print(f"Overall Batch MAE: Thickness Error: {avg_thick_err:.2f}%, CL Error: {avg_cl_err:.2f}%, CM Error: {avg_cm_err:.2f}%")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Generate airfoils using Pre-train and PG models")
-    parser.add_argument("--labels", "-l", type=float, nargs=4, help="Labels: Alpha Re Cl Thickness")
+    parser = argparse.ArgumentParser(description="Generate airfoils using a trained CWGAN-GP model")
+    parser.add_argument("--model", "-m", type=str, default="model/gan_final.pt", help="Path to model checkpoint")
+    parser.add_argument("--tag", type=str, default="GAN", help="Tag prefix used in generated filenames")
+    parser.add_argument("--labels", "-l", type=float, nargs=5, help="Labels: Alpha Re Cl Thickness Cm")
     args = parser.parse_args()
     
-    custom_label = args.labels if args.labels else [2.0, 200000.0, 0.6, 0.12]
+    custom_label = args.labels if args.labels else [2.0, 200000.0, 0.6, 0.12, -0.08]
     
-    # 分别为预训练模型和最终模型生成结果
-    generate_and_evaluate('model/pre_train.pt', 'PRE', user_label_list=custom_label)
-    generate_and_evaluate('model/gan_final.pt', 'PG', user_label_list=custom_label)
+    generate_and_evaluate(args.model, args.tag, user_label_list=custom_label)

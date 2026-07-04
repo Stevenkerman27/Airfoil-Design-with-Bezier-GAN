@@ -13,23 +13,30 @@ disc_conv_channels: 4
 disc_conv2_kernel: 11
 disc_conv2_channels: 4
 disc_conv2_stride: 3
-cond_dim: 4
+cond_dim: 5
 lr: 2e-4
-lr_phase2: 1e-4
 epochs: 260
-pre_train_epoch: 200
 n_critic: 3
 lambda_gp: 10
-lambda_phys_d: 5.0
-lambda_phys_g: 5.0
 batch_size: 16
 device: cuda  # 设置计算设备: auto (自动选择), cuda, 或 cpu
 max_workers: 16
-max_Cd:
-eps_cl_start: 0.1
-eps_cl_end: 0.05
-eps_t_start: 0.02
-eps_t_end: 0.02
+max_Cd: 0.05
 plot_interval: 2
 cl_noise_std: 0.1  # 升力系数生成时的随机噪声标准差
 eval_var_weight: 0.05  # 评估时不准确度计算中方差项的权重系数
+surrogate_cond_dim: 2
+surrogate_out_dim: 3
+surrogate_hid_node: 256
+surrogate_hid_layer: 2
+surrogate_lr: 1e-3
+surrogate_epochs: 200
+surrogate_batch_size: 32
+surrogate_split_ratio: [0.8, 0.1, 0.1]
+surrogate_seed: 20260704
+surrogate_weight_decay: 1e-5
+surrogate_target_loss_weights: [1.0, 1.0, 2.0]  # 顺序为 [CM, CL, CD]
+surrogate_best_check_interval: 10
+surrogate_dataset_path: model/airfoil_dataset.pt
+surrogate_norm_path: model/surrogate_norm.pt
+surrogate_best_model_path: model/surrogate_best.pt

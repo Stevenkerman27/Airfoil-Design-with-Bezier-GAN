@@ -1,0 +1,458 @@
+import argparse
+import os
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import yaml
+from torch.utils.data import DataLoader, Dataset, random_split
+
+from model import AerodynamicSurrogate
+
+
+DATASET_LABEL_NAMES = ['alpha', 'Re', 'CL', 'Thickness', 'CM']
+DATASET_CD_KEY = 'cd'
+SURROGATE_CONDITION_NAMES = ['alpha', 'Re']
+SURROGATE_TARGET_NAMES = ['CM', 'CL', 'CD']
+LOSS_PLOT_PATH = 'model/surrogate_loss.png'
+ERROR_PLOT_PATH = 'model/surrogate_error.png'
+VALIDATION_PLOT_PATHS = {
+    'CL': 'model/surrogate_val_cl.png',
+    'CD': 'model/surrogate_val_cd.png',
+    'CM': 'model/surrogate_val_cm.png',
+}
+
+
+class WeightedMSELoss(torch.nn.Module):
+    def __init__(self, weights):
+        super().__init__()
+        self.register_buffer('weights', weights.float())
+
+    def forward(self, predictions, targets):
+        if predictions.shape != targets.shape:
+            raise ValueError(
+                f"Prediction and target shapes must match, got "
+                f"{predictions.shape} and {targets.shape}"
+            )
+        squared_error = (predictions - targets) ** 2
+        return torch.mean(squared_error * self.weights)
+
+
+class AirfoilSurrogateDataset(Dataset):
+    def __init__(self, data_path, norm_path):
+        raw_data = torch.load(data_path, weights_only=True)
+        if len(raw_data) == 0:
+            raise ValueError(f"Dataset is empty: {data_path}")
+
+        self.label_names = DATASET_LABEL_NAMES
+        self.cd_key = DATASET_CD_KEY
+        self.condition_names = SURROGATE_CONDITION_NAMES
+        self.target_names = SURROGATE_TARGET_NAMES
+        self.condition_indices = [self.label_names.index(name) for name in self.condition_names]
+
+        coords_all = torch.stack([item['x'] for item in raw_data]).float()
+        coords_all = coords_all.view(coords_all.size(0), -1, 2)
+        self.x_min = coords_all[:, :, 0].min()
+        self.x_max = coords_all[:, :, 0].max()
+        self.y_min = coords_all[:, :, 1].min()
+        self.y_max = coords_all[:, :, 1].max()
+
+        conditions_all = torch.stack([self.extract_conditions(item) for item in raw_data]).float()
+        targets_all = torch.stack([self.extract_targets(item) for item in raw_data])
+
+        self.condition_mean = conditions_all.mean(dim=0)
+        self.condition_std = conditions_all.std(dim=0) + 1e-8
+        self.target_mean = targets_all.mean(dim=0)
+        self.target_std = targets_all.std(dim=0) + 1e-8
+
+        os.makedirs(os.path.dirname(norm_path), exist_ok=True)
+        torch.save({
+            'coord': {
+                'x_min': self.x_min,
+                'x_max': self.x_max,
+                'y_min': self.y_min,
+                'y_max': self.y_max,
+            },
+            'condition': {
+                'names': self.condition_names,
+                'mean': self.condition_mean,
+                'std': self.condition_std,
+            },
+            'target': {
+                'names': self.target_names,
+                'mean': self.target_mean,
+                'std': self.target_std,
+            },
+        }, norm_path)
+
+        self.samples = []
+        for item in raw_data:
+            coords = item['x'].float().clone().view(-1, 2)
+            coords[:, 0] = (coords[:, 0] - self.x_min) / (self.x_max - self.x_min + 1e-8)
+            coords[:, 1] = (coords[:, 1] - self.y_min) / (self.y_max - self.y_min + 1e-8)
+            norm_coords = coords.view(-1)
+
+            condition = self.extract_conditions(item)
+            norm_condition = (condition - self.condition_mean) / self.condition_std
+
+            target = self.extract_targets(item)
+            norm_target = (target - self.target_mean) / self.target_std
+
+            self.samples.append({
+                'coords': norm_coords,
+                'conditions': norm_condition,
+                'targets': norm_target,
+            })
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        sample = self.samples[idx]
+        return sample['coords'], sample['conditions'], sample['targets']
+
+    def extract_conditions(self, item):
+        return item['y'][self.condition_indices].float()
+
+    def extract_targets(self, item):
+        values = []
+        for name in self.target_names:
+            if name == 'CD':
+                values.append(item[self.cd_key])
+            else:
+                values.append(item['y'][self.label_names.index(name)])
+        return torch.tensor(values, dtype=torch.float32)
+
+    def denormalize_targets(self, values):
+        mean = self.target_mean.to(values.device)
+        std = self.target_std.to(values.device)
+        return values * std + mean
+
+
+def load_config(config_path):
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
+
+
+def resolve_device(config):
+    device_cfg = config['device']
+    if device_cfg.lower() == 'cuda' and torch.cuda.is_available():
+        return torch.device('cuda')
+    if device_cfg.lower() == 'cpu':
+        return torch.device('cpu')
+    if device_cfg.lower() == 'auto':
+        return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    raise ValueError(f"Unknown device configuration: {device_cfg}")
+
+
+def split_dataset(dataset, config):
+    split_ratio = config['surrogate_split_ratio']
+    if len(split_ratio) != 3:
+        raise ValueError('surrogate_split_ratio must contain train, val, test ratios')
+
+    total_ratio = sum(split_ratio)
+    if abs(total_ratio - 1.0) > 1e-6:
+        raise ValueError(f"surrogate_split_ratio must sum to 1.0, got {total_ratio}")
+
+    dataset_size = len(dataset)
+    train_size = int(dataset_size * split_ratio[0])
+    val_size = int(dataset_size * split_ratio[1])
+    test_size = dataset_size - train_size - val_size
+    if min(train_size, val_size, test_size) <= 0:
+        raise ValueError(
+            f"Invalid split sizes: train={train_size}, val={val_size}, test={test_size}"
+        )
+
+    generator = torch.Generator().manual_seed(config['surrogate_seed'])
+    return random_split(dataset, [train_size, val_size, test_size], generator=generator)
+
+
+def evaluate(model, dataloader, criterion, dataset, device):
+    model.eval()
+    total_loss = 0.0
+    total_mae = 0.0
+    batch_count = 0
+    predictions = []
+    targets = []
+
+    with torch.no_grad():
+        for coords, conditions, target in dataloader:
+            coords = coords.to(device)
+            conditions = conditions.to(device)
+            target = target.to(device)
+
+            pred = model(coords, conditions)
+            loss = criterion(pred, target)
+
+            pred_real = dataset.denormalize_targets(pred)
+            target_real = dataset.denormalize_targets(target)
+            mae = torch.mean(torch.abs(pred_real - target_real))
+
+            total_loss += loss.item()
+            total_mae += mae.item()
+            batch_count += 1
+            predictions.append(pred_real.cpu())
+            targets.append(target_real.cpu())
+
+    if batch_count == 0:
+        raise ValueError('Evaluation dataloader produced zero batches')
+
+    return {
+        'loss': total_loss / batch_count,
+        'mae': total_mae / batch_count,
+        'predictions': torch.cat(predictions, dim=0),
+        'targets': torch.cat(targets, dim=0),
+    }
+
+
+def train_one_epoch(model, dataloader, criterion, optimizer, dataset, device):
+    model.train()
+    total_loss = 0.0
+    total_mae = 0.0
+    batch_count = 0
+
+    for coords, conditions, target in dataloader:
+        coords = coords.to(device)
+        conditions = conditions.to(device)
+        target = target.to(device)
+
+        optimizer.zero_grad()
+        pred = model(coords, conditions)
+        loss = criterion(pred, target)
+        loss.backward()
+        optimizer.step()
+
+        with torch.no_grad():
+            pred_real = dataset.denormalize_targets(pred)
+            target_real = dataset.denormalize_targets(target)
+            mae = torch.mean(torch.abs(pred_real - target_real))
+
+        total_loss += loss.item()
+        total_mae += mae.item()
+        batch_count += 1
+
+    if batch_count == 0:
+        raise ValueError('Training dataloader produced zero batches')
+
+    return total_loss / batch_count, total_mae / batch_count
+
+
+def plot_training_curves(train_values, val_values, ylabel, title, path):
+    epochs = np.arange(1, len(train_values) + 1)
+    plt.figure(figsize=(10, 6))
+    plt.plot(epochs, train_values, label='Train')
+    plt.plot(epochs, val_values, label='Validation')
+    plt.xlabel('Epoch')
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.grid(True, alpha=0.4)
+    plt.legend()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    plt.savefig(path)
+    plt.close()
+    print(f"Saved plot to {path}")
+
+
+def plot_prediction_scatter(targets, predictions, target_index, title, path):
+    actual = targets[:, target_index].numpy()
+    predicted = predictions[:, target_index].numpy()
+    min_value = min(actual.min(), predicted.min())
+    max_value = max(actual.max(), predicted.max())
+    margin = (max_value - min_value) * 0.05
+    if margin == 0.0:
+        margin = 1e-3
+
+    plt.figure(figsize=(7, 7))
+    plt.scatter(actual, predicted, s=12, alpha=0.65)
+    plt.plot(
+        [min_value - margin, max_value + margin],
+        [min_value - margin, max_value + margin],
+        color='red',
+        linestyle='--',
+        linewidth=1.5,
+        label='Perfect prediction',
+    )
+    plt.xlabel(f'Actual {title}')
+    plt.ylabel(f'Predicted {title}')
+    plt.title(f'Validation {title}: Actual vs Predicted')
+    plt.grid(True, alpha=0.4)
+    plt.legend()
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    plt.savefig(path)
+    plt.close()
+    print(f"Saved plot to {path}")
+
+
+def save_checkpoint(model, config, dataset, epoch, val_loss):
+    path = config['surrogate_best_model_path']
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'epoch': epoch,
+        'val_loss': val_loss,
+        'target_names': dataset.target_names,
+        'condition_names': dataset.condition_names,
+        'target_loss_weights': config['surrogate_target_loss_weights'],
+        'norm_path': config['surrogate_norm_path'],
+    }, path)
+    print(f"Saved best surrogate model to {path}")
+
+
+def clone_state_dict(state_dict):
+    return {
+        name: value.detach().cpu().clone()
+        for name, value in state_dict.items()
+    }
+
+
+def build_weighted_mse_loss(config, device):
+    weights = torch.tensor(config['surrogate_target_loss_weights'], dtype=torch.float32, device=device)
+    if weights.numel() != len(SURROGATE_TARGET_NAMES):
+        raise ValueError(
+            f"surrogate_target_loss_weights must contain "
+            f"{len(SURROGATE_TARGET_NAMES)} values for {SURROGATE_TARGET_NAMES}, "
+            f"got {weights.numel()}"
+        )
+    if torch.any(weights < 0):
+        raise ValueError(f"surrogate_target_loss_weights must be non-negative, got {weights.tolist()}")
+    if torch.sum(weights) <= 0:
+        raise ValueError(f"At least one surrogate_target_loss_weights value must be positive, got {weights.tolist()}")
+    return WeightedMSELoss(weights)
+
+
+def run_training(config_path, epochs_override=None):
+    config = load_config(config_path)
+    device = resolve_device(config)
+    print(f"Using device: {device}")
+
+    dataset = AirfoilSurrogateDataset(
+        config['surrogate_dataset_path'],
+        config['surrogate_norm_path'],
+    )
+    train_set, val_set, test_set = split_dataset(dataset, config)
+    print(
+        f"Dataset split: train={len(train_set)}, "
+        f"validation={len(val_set)}, test={len(test_set)}"
+    )
+
+    batch_size = config['surrogate_batch_size']
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, drop_last=False)
+    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, drop_last=False)
+
+    model = AerodynamicSurrogate(config).to(device)
+    # Weighted MSE loss on normalized targets:
+    # L = (1 / (B * K)) * sum_b sum_k w[k] * (y_hat[b, k] - y[b, k])^2,
+    # where target order is [CM, CL, CD], K = 3, and w comes from
+    # surrogate_target_loss_weights.
+    criterion = build_weighted_mse_loss(config, device)
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=float(config['surrogate_lr']),
+        weight_decay=float(config['surrogate_weight_decay']),
+    )
+
+    epochs = config['surrogate_epochs']
+    if epochs_override is not None:
+        epochs = epochs_override
+
+    train_losses = []
+    val_losses = []
+    train_errors = []
+    val_errors = []
+    best_val_loss = float('inf')
+    best_epoch = None
+    best_model_state = None
+    best_check_interval = config['surrogate_best_check_interval']
+    if best_check_interval <= 0:
+        raise ValueError(f"surrogate_best_check_interval must be positive, got {best_check_interval}")
+
+    for epoch in range(epochs):
+        train_loss, train_mae = train_one_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            dataset,
+            device,
+        )
+        val_result = evaluate(model, val_loader, criterion, dataset, device)
+
+        train_losses.append(train_loss)
+        val_losses.append(val_result['loss'])
+        train_errors.append(train_mae)
+        val_errors.append(val_result['mae'])
+
+        should_check_best = (
+            epoch == 0
+            or (epoch + 1) % best_check_interval == 0
+            or epoch == epochs - 1
+        )
+        if should_check_best and val_result['loss'] < best_val_loss:
+            best_val_loss = val_result['loss']
+            best_epoch = epoch
+            best_model_state = clone_state_dict(model.state_dict())
+
+        if epoch % 5 == 0 or epoch == epochs - 1:
+            print(
+                f"[Epoch {epoch + 1}/{epochs}] "
+                f"[Train loss: {train_loss:.6f}] [Val loss: {val_result['loss']:.6f}] "
+                f"[Train MAE: {train_mae:.6f}] [Val MAE: {val_result['mae']:.6f}]"
+            )
+
+    if best_model_state is None:
+        raise ValueError('No best model state was recorded during training')
+
+    model.load_state_dict(best_model_state)
+    save_checkpoint(model, config, dataset, best_epoch, best_val_loss)
+
+    plot_training_curves(
+        train_losses,
+        val_losses,
+        'MSE Loss',
+        'Surrogate Training Loss',
+        LOSS_PLOT_PATH,
+    )
+    plot_training_curves(
+        train_errors,
+        val_errors,
+        'MAE',
+        'Surrogate Prediction Error',
+        ERROR_PLOT_PATH,
+    )
+
+    val_result = evaluate(model, val_loader, criterion, dataset, device)
+
+    plot_prediction_scatter(
+        val_result['targets'],
+        val_result['predictions'],
+        dataset.target_names.index('CL'),
+        'CL',
+        VALIDATION_PLOT_PATHS['CL'],
+    )
+    plot_prediction_scatter(
+        val_result['targets'],
+        val_result['predictions'],
+        dataset.target_names.index('CD'),
+        'CD',
+        VALIDATION_PLOT_PATHS['CD'],
+    )
+    plot_prediction_scatter(
+        val_result['targets'],
+        val_result['predictions'],
+        dataset.target_names.index('CM'),
+        'CM',
+        VALIDATION_PLOT_PATHS['CM'],
+    )
+
+    print(f"Best validation loss: {best_val_loss:.6f}")
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Train airfoil aerodynamic surrogate model')
+    parser.add_argument('--config', type=str, default='config.yaml', help='Path to config yaml')
+    parser.add_argument('--epochs', type=int, help='Override surrogate_epochs for smoke tests')
+    args = parser.parse_args()
+    run_training(args.config, epochs_override=args.epochs)

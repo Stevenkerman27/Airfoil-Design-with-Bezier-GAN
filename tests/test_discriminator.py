@@ -1,5 +1,9 @@
 import torch
+import os
+import sys
 import yaml
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from model import Discriminator
 
 def test_discriminator_forward():
@@ -12,7 +16,7 @@ def test_discriminator_forward():
         'disc_conv2_kernel': 11,
         'disc_conv2_channels': 16,
         'disc_conv2_stride': 3,
-        'cond_dim': 4,
+        'cond_dim': 5,
         'gen_hid_fun': 'LeakyRELU'
     }
     
@@ -21,12 +25,11 @@ def test_discriminator_forward():
     
     # input coords shape: (batch_size, num_output_points * 2)
     coords = torch.randn(batch_size, 100 * 2)
-    cond = torch.randn(batch_size, 4)
+    cond = torch.randn(batch_size, 5)
     
-    output, phys_err = model(coords, cond)
+    output = model(coords, cond)
     
     assert output.shape == (batch_size, 1), f"Expected shape (4, 1), got {output.shape}"
-    assert phys_err.shape == (batch_size, 1), f"Expected shape (4, 1), got {phys_err.shape}"
 
 if __name__ == "__main__":
     test_discriminator_forward()
