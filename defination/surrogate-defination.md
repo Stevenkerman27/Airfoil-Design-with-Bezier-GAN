@@ -18,14 +18,87 @@
 ## 数据处理路线
 
 1. 从 `model/airfoil_dataset.pt` 读取原始数据。
-2. 坐标使用 Min-Max 归一化。
-3. 输入工况只使用标签中的 `alpha, Re`，并单独计算均值和标准差。
-4. 监督目标使用 `[CM, CL, CD]`：
-   - `CL` 来自 `item["y"][2]`
+2. 使用固定随机种子按样本级随机划分训练集、验证集、测试集，比例为 8:1:1。
+3. 坐标使用训练集统计量做 Min-Max 归一化。
+4. 输入工况只使用标签中的 `alpha, Re`，并使用训练集统计量计算均值和标准差。
+5. 监督目标使用 `[CM, CL, CD]`：
    - `CM` 来自 `item["y"][4]`
+   - `CL` 来自 `item["y"][2]`
    - `CD` 来自 `item["cd"]`
-5. 目标 `[CM, CL, CD]` 单独计算均值和标准差，训练和评估时使用同一归一化参数。
-6. 训练脚本保存代理模型归一化参数，作为推理和绘图的唯一来源。
+6. 目标 `[CM, CL, CD]` 使用训练集统计量计算均值和标准差，训练、验证、测试和推理时使用同一归一化参数。
+7. 训练脚本保存代理模型归一化参数，作为推理、评估和绘图的唯一来源。
+
+## 归一化定义
+
+归一化统计量只从训练集计算，禁止使用验证集和测试集参与统计量估计，避免数据泄漏。验证集和测试集只应用训练集统计量。
+
+设训练集样本索引集合为 `I_train`，目标顺序固定为 `[CM, CL, CD]`。
+
+### 坐标归一化
+
+翼型坐标原始值为 `(x, y)`。训练集上的坐标范围定义为：
+
+`x_min = min_{i in I_train, p} x_{i,p}`
+
+`x_max = max_{i in I_train, p} x_{i,p}`
+
+`y_min = min_{i in I_train, p} y_{i,p}`
+
+`y_max = max_{i in I_train, p} y_{i,p}`
+
+所有 train/val/test 样本统一使用：
+
+`x_norm = (x - x_min) / (x_max - x_min + 1e-8)`
+
+`y_norm = (y - y_min) / (y_max - y_min + 1e-8)`
+
+### 工况归一化
+
+工况输入为：
+
+`c = [alpha, Re]`
+
+训练集统计量为：
+
+`condition_mean = mean_{i in I_train}(c_i)`
+
+`condition_std = std_{i in I_train}(c_i) + 1e-8`
+
+所有 train/val/test 样本统一使用：
+
+`c_norm = (c - condition_mean) / condition_std`
+
+### 目标归一化
+
+监督目标为：
+
+`t = [CM, CL, CD]`
+
+训练集统计量为：
+
+`target_mean = mean_{i in I_train}(t_i)`
+
+`target_std = std_{i in I_train}(t_i) + 1e-8`
+
+所有 train/val/test 样本统一使用：
+
+`t_norm = (t - target_mean) / target_std`
+
+模型训练时预测的是归一化目标空间中的 `t_norm`。评估 MAE、RMSE、R2 和散点图时，需要反归一化回真实气动系数尺度：
+
+`t = t_norm * target_std + target_mean`
+
+### 归一化参数保存
+
+`model/surrogate_norm.pt` 保存 train-only 归一化参数，并记录：
+
+- `source_split: train`
+- `split_seed`
+- `split_ratio`
+- `split_counts`
+- 坐标范围 `x_min, x_max, y_min, y_max`
+- 工况 `condition_mean, condition_std`
+- 目标 `target_mean, target_std`
 
 ## 模型路线
 
@@ -57,7 +130,7 @@
    - 验证 loss
    - 训练 MAE
    - 验证 MAE
-5. 每 10 个 epoch 判断一次验证 loss 是否刷新最优模型；训练过程中最佳权重只保存在内存中。
+5. 每个 epoch 判断一次验证 loss 是否刷新最优模型；训练过程中最佳权重只保存在内存中。
 6. 训练结束后，将内存中的最佳模型保存到 `model/surrogate_best.pt`。
 7. 最终用最优模型在验证集绘图。
 

@@ -1,0 +1,11 @@
+best_value: 0.04508241522595587
+best_params:
+  surrogate_lr: 0.0006069338139812379
+  surrogate_weight_decay: 1.5916314096562145e-06
+  surrogate_batch_size: 16
+  surrogate_hid_node: 256
+  surrogate_hid_layer: 3
+  disc_conv_channels: 16
+  disc_conv2_channels: 16
+  disc_conv2_stride: 2
+best_trial_number: 13

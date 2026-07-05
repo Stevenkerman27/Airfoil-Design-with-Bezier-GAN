@@ -1,0 +1,23 @@
+split: test
+sample_count: 5553
+model_path: model/surrogate_best.pt
+checkpoint_epoch: 188
+checkpoint_val_loss: 0.036901861093723634
+eval_loss: 0.03301427886960493
+eval_mae: 0.008020823517006061
+target_order:
+- CM
+- CL
+- CD
+per_target_mae:
+  CM: 0.0034852216485887766
+  CL: 0.019817082211375237
+  CD: 0.0008135787211358547
+per_target_rmse:
+  CM: 0.005191503558307886
+  CL: 0.029884686693549156
+  CD: 0.001365117379464209
+per_target_r2:
+  CM: 0.9884468913078308
+  CL: 0.9911419749259949
+  CD: 0.9597895741462708

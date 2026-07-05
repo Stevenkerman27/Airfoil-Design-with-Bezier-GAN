@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset, Subset
 
 from model import AerodynamicSurrogate
 
@@ -41,10 +41,11 @@ class WeightedMSELoss(torch.nn.Module):
 
 
 class AirfoilSurrogateDataset(Dataset):
-    def __init__(self, data_path, norm_path):
+    def __init__(self, data_path, norm_path, config, save_norm=True):
         raw_data = torch.load(data_path, weights_only=True)
         if len(raw_data) == 0:
             raise ValueError(f"Dataset is empty: {data_path}")
+        self.split_indices = build_surrogate_split_indices(len(raw_data), config)
 
         self.label_names = DATASET_LABEL_NAMES
         self.cd_key = DATASET_CD_KEY
@@ -52,40 +53,50 @@ class AirfoilSurrogateDataset(Dataset):
         self.target_names = SURROGATE_TARGET_NAMES
         self.condition_indices = [self.label_names.index(name) for name in self.condition_names]
 
-        coords_all = torch.stack([item['x'] for item in raw_data]).float()
-        coords_all = coords_all.view(coords_all.size(0), -1, 2)
-        self.x_min = coords_all[:, :, 0].min()
-        self.x_max = coords_all[:, :, 0].max()
-        self.y_min = coords_all[:, :, 1].min()
-        self.y_max = coords_all[:, :, 1].max()
+        train_items = [raw_data[index] for index in self.split_indices['train']]
+        coords_train = torch.stack([item['x'] for item in train_items]).float()
+        coords_train = coords_train.view(coords_train.size(0), -1, 2)
+        self.x_min = coords_train[:, :, 0].min()
+        self.x_max = coords_train[:, :, 0].max()
+        self.y_min = coords_train[:, :, 1].min()
+        self.y_max = coords_train[:, :, 1].max()
 
-        conditions_all = torch.stack([self.extract_conditions(item) for item in raw_data]).float()
-        targets_all = torch.stack([self.extract_targets(item) for item in raw_data])
+        conditions_train = torch.stack([self.extract_conditions(item) for item in train_items]).float()
+        targets_train = torch.stack([self.extract_targets(item) for item in train_items])
 
-        self.condition_mean = conditions_all.mean(dim=0)
-        self.condition_std = conditions_all.std(dim=0) + 1e-8
-        self.target_mean = targets_all.mean(dim=0)
-        self.target_std = targets_all.std(dim=0) + 1e-8
+        self.condition_mean = conditions_train.mean(dim=0)
+        self.condition_std = conditions_train.std(dim=0) + 1e-8
+        self.target_mean = targets_train.mean(dim=0)
+        self.target_std = targets_train.std(dim=0) + 1e-8
 
-        os.makedirs(os.path.dirname(norm_path), exist_ok=True)
-        torch.save({
-            'coord': {
-                'x_min': self.x_min,
-                'x_max': self.x_max,
-                'y_min': self.y_min,
-                'y_max': self.y_max,
-            },
-            'condition': {
-                'names': self.condition_names,
-                'mean': self.condition_mean,
-                'std': self.condition_std,
-            },
-            'target': {
-                'names': self.target_names,
-                'mean': self.target_mean,
-                'std': self.target_std,
-            },
-        }, norm_path)
+        if save_norm:
+            os.makedirs(os.path.dirname(norm_path), exist_ok=True)
+            torch.save({
+                'source_split': 'train',
+                'split_seed': config['surrogate_seed'],
+                'split_ratio': config['surrogate_split_ratio'],
+                'split_counts': {
+                    'train': len(self.split_indices['train']),
+                    'val': len(self.split_indices['val']),
+                    'test': len(self.split_indices['test']),
+                },
+                'coord': {
+                    'x_min': self.x_min,
+                    'x_max': self.x_max,
+                    'y_min': self.y_min,
+                    'y_max': self.y_max,
+                },
+                'condition': {
+                    'names': self.condition_names,
+                    'mean': self.condition_mean,
+                    'std': self.condition_std,
+                },
+                'target': {
+                    'names': self.target_names,
+                    'mean': self.target_mean,
+                    'std': self.target_std,
+                },
+            }, norm_path)
 
         self.samples = []
         for item in raw_data:
@@ -147,7 +158,7 @@ def resolve_device(config):
     raise ValueError(f"Unknown device configuration: {device_cfg}")
 
 
-def split_dataset(dataset, config):
+def build_surrogate_split_indices(dataset_size, config):
     split_ratio = config['surrogate_split_ratio']
     if len(split_ratio) != 3:
         raise ValueError('surrogate_split_ratio must contain train, val, test ratios')
@@ -156,7 +167,6 @@ def split_dataset(dataset, config):
     if abs(total_ratio - 1.0) > 1e-6:
         raise ValueError(f"surrogate_split_ratio must sum to 1.0, got {total_ratio}")
 
-    dataset_size = len(dataset)
     train_size = int(dataset_size * split_ratio[0])
     val_size = int(dataset_size * split_ratio[1])
     test_size = dataset_size - train_size - val_size
@@ -166,7 +176,23 @@ def split_dataset(dataset, config):
         )
 
     generator = torch.Generator().manual_seed(config['surrogate_seed'])
-    return random_split(dataset, [train_size, val_size, test_size], generator=generator)
+    indices = torch.randperm(dataset_size, generator=generator).tolist()
+    return {
+        'train': indices[:train_size],
+        'val': indices[train_size:train_size + val_size],
+        'test': indices[train_size + val_size:],
+    }
+
+
+def split_dataset(dataset, config):
+    expected_indices = build_surrogate_split_indices(len(dataset), config)
+    if dataset.split_indices != expected_indices:
+        raise ValueError('Dataset split indices do not match current config')
+    return (
+        Subset(dataset, dataset.split_indices['train']),
+        Subset(dataset, dataset.split_indices['val']),
+        Subset(dataset, dataset.split_indices['test']),
+    )
 
 
 def evaluate(model, dataloader, criterion, dataset, device):
@@ -323,14 +349,15 @@ def build_weighted_mse_loss(config, device):
     return WeightedMSELoss(weights)
 
 
-def run_training(config_path, epochs_override=None):
-    config = load_config(config_path)
+def train_surrogate_from_config(config, epochs_override=None, save_artifacts=True, trial=None):
     device = resolve_device(config)
     print(f"Using device: {device}")
 
     dataset = AirfoilSurrogateDataset(
         config['surrogate_dataset_path'],
         config['surrogate_norm_path'],
+        config,
+        save_norm=save_artifacts,
     )
     train_set, val_set, test_set = split_dataset(dataset, config)
     print(
@@ -363,11 +390,9 @@ def run_training(config_path, epochs_override=None):
     train_errors = []
     val_errors = []
     best_val_loss = float('inf')
+    best_val_mae = None
     best_epoch = None
     best_model_state = None
-    best_check_interval = config['surrogate_best_check_interval']
-    if best_check_interval <= 0:
-        raise ValueError(f"surrogate_best_check_interval must be positive, got {best_check_interval}")
 
     for epoch in range(epochs):
         train_loss, train_mae = train_one_epoch(
@@ -385,15 +410,17 @@ def run_training(config_path, epochs_override=None):
         train_errors.append(train_mae)
         val_errors.append(val_result['mae'])
 
-        should_check_best = (
-            epoch == 0
-            or (epoch + 1) % best_check_interval == 0
-            or epoch == epochs - 1
-        )
-        if should_check_best and val_result['loss'] < best_val_loss:
+        if val_result['loss'] < best_val_loss:
             best_val_loss = val_result['loss']
+            best_val_mae = val_result['mae']
             best_epoch = epoch
             best_model_state = clone_state_dict(model.state_dict())
+
+        if trial is not None:
+            trial.report(val_result['loss'], epoch)
+            if trial.should_prune():
+                import optuna
+                raise optuna.TrialPruned()
 
         if epoch % 5 == 0 or epoch == epochs - 1:
             print(
@@ -406,48 +433,67 @@ def run_training(config_path, epochs_override=None):
         raise ValueError('No best model state was recorded during training')
 
     model.load_state_dict(best_model_state)
-    save_checkpoint(model, config, dataset, best_epoch, best_val_loss)
 
-    plot_training_curves(
-        train_losses,
-        val_losses,
-        'MSE Loss',
-        'Surrogate Training Loss',
-        LOSS_PLOT_PATH,
-    )
-    plot_training_curves(
-        train_errors,
-        val_errors,
-        'MAE',
-        'Surrogate Prediction Error',
-        ERROR_PLOT_PATH,
-    )
+    if save_artifacts:
+        save_checkpoint(model, config, dataset, best_epoch, best_val_loss)
 
-    val_result = evaluate(model, val_loader, criterion, dataset, device)
+        plot_training_curves(
+            train_losses,
+            val_losses,
+            'MSE Loss',
+            'Surrogate Training Loss',
+            LOSS_PLOT_PATH,
+        )
+        plot_training_curves(
+            train_errors,
+            val_errors,
+            'MAE',
+            'Surrogate Prediction Error',
+            ERROR_PLOT_PATH,
+        )
 
-    plot_prediction_scatter(
-        val_result['targets'],
-        val_result['predictions'],
-        dataset.target_names.index('CL'),
-        'CL',
-        VALIDATION_PLOT_PATHS['CL'],
-    )
-    plot_prediction_scatter(
-        val_result['targets'],
-        val_result['predictions'],
-        dataset.target_names.index('CD'),
-        'CD',
-        VALIDATION_PLOT_PATHS['CD'],
-    )
-    plot_prediction_scatter(
-        val_result['targets'],
-        val_result['predictions'],
-        dataset.target_names.index('CM'),
-        'CM',
-        VALIDATION_PLOT_PATHS['CM'],
-    )
+        val_result = evaluate(model, val_loader, criterion, dataset, device)
+
+        plot_prediction_scatter(
+            val_result['targets'],
+            val_result['predictions'],
+            dataset.target_names.index('CL'),
+            'CL',
+            VALIDATION_PLOT_PATHS['CL'],
+        )
+        plot_prediction_scatter(
+            val_result['targets'],
+            val_result['predictions'],
+            dataset.target_names.index('CD'),
+            'CD',
+            VALIDATION_PLOT_PATHS['CD'],
+        )
+        plot_prediction_scatter(
+            val_result['targets'],
+            val_result['predictions'],
+            dataset.target_names.index('CM'),
+            'CM',
+            VALIDATION_PLOT_PATHS['CM'],
+        )
 
     print(f"Best validation loss: {best_val_loss:.6f}")
+    if best_val_mae is None:
+        raise ValueError('No best validation MAE was recorded during training')
+    return {
+        'best_val_loss': best_val_loss,
+        'best_val_mae': best_val_mae,
+        'best_epoch': best_epoch,
+    }
+
+
+def run_training(config_path, epochs_override=None):
+    config = load_config(config_path)
+    return train_surrogate_from_config(
+        config,
+        epochs_override=epochs_override,
+        save_artifacts=True,
+        trial=None,
+    )
 
 
 if __name__ == '__main__':

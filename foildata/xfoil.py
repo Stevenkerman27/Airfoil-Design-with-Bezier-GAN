@@ -9,7 +9,7 @@ import glob
 COORD_DIR = "processed_foil"
 POLAR_DIR = "polars"
 TEMP_DIR = "temp_foils"
-foil_n = 600
+foil_n = 1600
 
 # Ensure output directories exist
 os.makedirs(os.path.join(os.path.dirname(__file__), POLAR_DIR), exist_ok=True)
