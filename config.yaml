@@ -15,9 +15,14 @@ disc_conv2_channels: 16
 disc_conv2_stride: 2
 cond_dim: 5
 lr: 2e-4
-epochs: 260
+epochs: 120
 n_critic: 3
 lambda_gp: 10
+gan_aux_start_epoch: 30
+gan_aux_ramp_epochs: 10
+gan_adv_loss_final_weight: 0.1
+gan_surrogate_loss_weight: 20.0
+gan_thickness_loss_weight: 1.0
 batch_size: 16
 device: cuda  # 设置计算设备: auto (自动选择), cuda, 或 cpu
 max_workers: 16

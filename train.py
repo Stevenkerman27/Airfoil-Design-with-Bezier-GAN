@@ -1,17 +1,26 @@
 import argparse
+import csv
 import math
+import os
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.autograd as autograd
 import yaml
 from torch.utils.data import DataLoader
 
 from dataset import AirfoilDataset
-from model import Discriminator, Generator
+from model import AerodynamicSurrogate, Discriminator, Generator
+from plot_gan_metrics import METRIC_COLUMNS, plot_gan_metrics
+from utils import calculate_relative_thickness_torch
+
+
+SURROGATE_TARGET_ORDER = ['CM', 'CL', 'CD']
+GAN_LABEL_ORDER = ['alpha', 'Re', 'CL', 'Thickness', 'CM']
+GAN_METRICS_PATH = 'model/gan_training_metrics.csv'
+GAN_LOSS_PLOT_PATH = 'model/loss_curve.png'
 
 
 def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device):
@@ -42,6 +51,144 @@ def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, d
     return gradient_penalty, grad_norm.mean().item()
 
 
+def load_frozen_surrogate(config, device):
+    model = AerodynamicSurrogate(config).to(device)
+    checkpoint = torch.load(
+        config['surrogate_best_model_path'],
+        map_location=device,
+        weights_only=True,
+    )
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    return model
+
+
+def load_gan_auxiliary_stats(config, device):
+    gan_cond_norm = torch.load('model/cond_norm.pt', map_location=device, weights_only=True)
+    gan_coord_norm = torch.load('model/coord_norm.pt', map_location=device, weights_only=True)
+    surrogate_norm = torch.load(config['surrogate_norm_path'], map_location=device, weights_only=True)
+
+    surrogate_condition_names = surrogate_norm['condition']['names']
+    surrogate_target_names = surrogate_norm['target']['names']
+    if surrogate_condition_names != ['alpha', 'Re']:
+        raise ValueError(f"Unexpected surrogate condition order: {surrogate_condition_names}")
+    if surrogate_target_names != SURROGATE_TARGET_ORDER:
+        raise ValueError(f"Unexpected surrogate target order: {surrogate_target_names}")
+
+    return {
+        'gan_cond_mean': gan_cond_norm['mean'].to(device),
+        'gan_cond_std': gan_cond_norm['std'].to(device),
+        'gan_coord': {
+            'x_min': gan_coord_norm['x_min'].to(device),
+            'x_max': gan_coord_norm['x_max'].to(device),
+            'y_min': gan_coord_norm['y_min'].to(device),
+            'y_max': gan_coord_norm['y_max'].to(device),
+        },
+        'surrogate_coord': {
+            'x_min': surrogate_norm['coord']['x_min'].to(device),
+            'x_max': surrogate_norm['coord']['x_max'].to(device),
+            'y_min': surrogate_norm['coord']['y_min'].to(device),
+            'y_max': surrogate_norm['coord']['y_max'].to(device),
+        },
+        'surrogate_condition_mean': surrogate_norm['condition']['mean'].to(device),
+        'surrogate_condition_std': surrogate_norm['condition']['std'].to(device),
+        'surrogate_target_mean': surrogate_norm['target']['mean'].to(device),
+        'surrogate_target_std': surrogate_norm['target']['std'].to(device),
+    }
+
+
+def compute_generator_loss_weights(config, epoch):
+    start_epoch = config['gan_aux_start_epoch']
+    ramp_epochs = config['gan_aux_ramp_epochs']
+    adv_final_weight = float(config['gan_adv_loss_final_weight'])
+    surrogate_target_weight = float(config['gan_surrogate_loss_weight'])
+    thickness_target_weight = float(config['gan_thickness_loss_weight'])
+
+    if start_epoch < 0:
+        raise ValueError(f"gan_aux_start_epoch must be non-negative, got {start_epoch}")
+    if ramp_epochs <= 0:
+        raise ValueError(f"gan_aux_ramp_epochs must be positive, got {ramp_epochs}")
+    if adv_final_weight < 0:
+        raise ValueError(f"gan_adv_loss_final_weight must be non-negative, got {adv_final_weight}")
+    if surrogate_target_weight < 0:
+        raise ValueError(f"gan_surrogate_loss_weight must be non-negative, got {surrogate_target_weight}")
+    if thickness_target_weight < 0:
+        raise ValueError(f"gan_thickness_loss_weight must be non-negative, got {thickness_target_weight}")
+
+    if epoch < start_epoch:
+        progress = 0.0
+    elif epoch < start_epoch + ramp_epochs:
+        progress = (epoch - start_epoch + 1) / ramp_epochs
+    else:
+        progress = 1.0
+
+    progress = min(max(progress, 0.0), 1.0)
+    return {
+        'adv': 1.0 + progress * (adv_final_weight - 1.0),
+        'surrogate': progress * surrogate_target_weight,
+        'thickness': progress * thickness_target_weight,
+    }
+
+
+def denormalize_gan_coords(coords, coord_stats, num_points):
+    batch_size = coords.size(0)
+    coords_2d = coords.view(batch_size, num_points, 2)
+    x_values = coords_2d[:, :, 0] * (coord_stats['x_max'] - coord_stats['x_min'] + 1e-8) + coord_stats['x_min']
+    y_values = coords_2d[:, :, 1] * (coord_stats['y_max'] - coord_stats['y_min'] + 1e-8) + coord_stats['y_min']
+    return torch.stack([x_values, y_values], dim=2)
+
+
+def normalize_surrogate_coords(physical_coords, coord_stats):
+    x_values = (physical_coords[:, :, 0] - coord_stats['x_min']) / (coord_stats['x_max'] - coord_stats['x_min'] + 1e-8)
+    y_values = (physical_coords[:, :, 1] - coord_stats['y_min']) / (coord_stats['y_max'] - coord_stats['y_min'] + 1e-8)
+    return torch.stack([x_values, y_values], dim=2).view(physical_coords.size(0), -1)
+
+
+def denormalize_gan_conditions(norm_conds, stats):
+    return norm_conds * stats['gan_cond_std'] + stats['gan_cond_mean']
+
+
+def build_surrogate_conditions(physical_conds, stats):
+    condition = physical_conds[:, [0, 1]]
+    return (condition - stats['surrogate_condition_mean']) / stats['surrogate_condition_std']
+
+
+def compute_generator_auxiliary_losses(fake_foils, norm_conds, surrogate, stats, config):
+    if surrogate is None or stats is None:
+        raise ValueError('surrogate and stats must be loaded before computing auxiliary losses')
+
+    num_points = config['num_output_points']
+    physical_coords = denormalize_gan_coords(fake_foils, stats['gan_coord'], num_points)
+    physical_conds = denormalize_gan_conditions(norm_conds, stats)
+
+    surrogate_coords = normalize_surrogate_coords(physical_coords, stats['surrogate_coord'])
+    surrogate_conditions = build_surrogate_conditions(physical_conds, stats)
+    predicted_targets = surrogate(surrogate_coords, surrogate_conditions)
+
+    target_cm_cl = torch.stack(
+        [
+            physical_conds[:, GAN_LABEL_ORDER.index('CM')],
+            physical_conds[:, GAN_LABEL_ORDER.index('CL')],
+        ],
+        dim=1,
+    )
+    target_mean = stats['surrogate_target_mean'][[0, 1]]
+    target_std = stats['surrogate_target_std'][[0, 1]]
+    normalized_targets = (target_cm_cl - target_mean) / target_std
+    surrogate_loss = torch.mean((predicted_targets[:, [0, 1]] - normalized_targets) ** 2)
+
+    predicted_thickness = calculate_relative_thickness_torch(physical_coords)
+    target_thickness_norm = norm_conds[:, GAN_LABEL_ORDER.index('Thickness')]
+    predicted_thickness_norm = (
+        predicted_thickness - stats['gan_cond_mean'][GAN_LABEL_ORDER.index('Thickness')]
+    ) / stats['gan_cond_std'][GAN_LABEL_ORDER.index('Thickness')]
+    thickness_loss = torch.mean((predicted_thickness_norm - target_thickness_norm) ** 2)
+
+    return surrogate_loss, thickness_loss
+
+
 def save_checkpoint(generator, discriminator, epoch, path):
     checkpoint = {
         'generator_state_dict': generator.state_dict(),
@@ -52,38 +199,20 @@ def save_checkpoint(generator, discriminator, epoch, path):
     print(f"Checkpoint saved to {path}")
 
 
-def plot_metrics(d_losses, g_losses, real_scores, fake_scores, grad_norms, path):
-    epochs_x = np.arange(len(d_losses))
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 15))
-    fig.tight_layout(pad=5.0)
+def init_metrics_csv(path, append):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    file_exists = os.path.exists(path)
+    mode = 'a' if append else 'w'
+    with open(path, mode, encoding='utf-8', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=METRIC_COLUMNS)
+        if not append or not file_exists:
+            writer.writeheader()
 
-    ax1.plot(epochs_x, d_losses, label="D Loss")
-    ax1.plot(epochs_x, g_losses, label="G Loss")
-    ax1.set_title("WGAN-GP Training Loss")
-    ax1.set_xlabel("Epoch")
-    ax1.set_ylabel("Loss")
-    ax1.legend()
-    ax1.grid(True)
 
-    ax2.plot(epochs_x, real_scores, label="Critic Real Score")
-    ax2.plot(epochs_x, fake_scores, label="Critic Fake Score")
-    ax2.set_title("Discriminator Scores")
-    ax2.set_xlabel("Epoch")
-    ax2.set_ylabel("Score")
-    ax2.legend()
-    ax2.grid(True)
-
-    ax3.plot(epochs_x, grad_norms, label="GP Norm", color='orange')
-    ax3.axhline(y=1.0, color='r', linestyle='--', alpha=0.3)
-    ax3.set_title("Gradient Penalty Norm")
-    ax3.set_xlabel("Epoch")
-    ax3.set_ylabel("Norm")
-    ax3.legend()
-    ax3.grid(True)
-
-    plt.savefig(path)
-    plt.close()
-    print(f"Training plots saved to {path}")
+def append_metrics_csv(path, metrics):
+    with open(path, 'a', encoding='utf-8', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=METRIC_COLUMNS)
+        writer.writerow(metrics)
 
 
 def run_lr_range_test(config, dataloader, device):
@@ -226,6 +355,8 @@ def train(resume_path=None):
 
     generator = Generator(config).to(device)
     discriminator = Discriminator(config).to(device)
+    surrogate = None
+    auxiliary_stats = None
 
     start_epoch = 0
     if resume_path:
@@ -243,17 +374,25 @@ def train(resume_path=None):
     optimizer_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(0.0, 0.9), weight_decay=5e-5)
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(0.0, 0.9), weight_decay=5e-5)
 
-    d_losses = []
-    g_losses = []
-    real_scores = []
-    fake_scores = []
-    grad_norms = []
+    init_metrics_csv(GAN_METRICS_PATH, append=resume_path is not None)
 
     import time
     for epoch in range(start_epoch, epochs):
+        loss_weights = compute_generator_loss_weights(config, epoch)
+        use_auxiliary_loss = loss_weights['surrogate'] > 0.0 or loss_weights['thickness'] > 0.0
+        if use_auxiliary_loss and surrogate is None:
+            surrogate = load_frozen_surrogate(config, device)
+            auxiliary_stats = load_gan_auxiliary_stats(config, device)
+
         start_time = time.time()
         epoch_d_loss = 0.0
         epoch_g_loss = 0.0
+        epoch_g_adv_loss = 0.0
+        epoch_surrogate_loss = 0.0
+        epoch_thickness_loss = 0.0
+        epoch_weighted_adv_loss = 0.0
+        epoch_weighted_surrogate_loss = 0.0
+        epoch_weighted_thickness_loss = 0.0
         epoch_real_score = 0.0
         epoch_fake_score = 0.0
         epoch_grad_norm = 0.0
@@ -298,30 +437,79 @@ def train(resume_path=None):
                 fake_foil = generator(z_gen, conds)
 
                 fake_validity_gen = discriminator(fake_foil, conds)
-                g_loss = -torch.mean(fake_validity_gen)
+                g_adv_loss = -torch.mean(fake_validity_gen)
+                if use_auxiliary_loss:
+                    surrogate_loss, thickness_loss = compute_generator_auxiliary_losses(
+                        fake_foil,
+                        conds,
+                        surrogate,
+                        auxiliary_stats,
+                        config,
+                    )
+                else:
+                    surrogate_loss = torch.zeros((), device=device)
+                    thickness_loss = torch.zeros((), device=device)
+
+                g_loss = (
+                    loss_weights['adv'] * g_adv_loss
+                    + loss_weights['surrogate'] * surrogate_loss
+                    + loss_weights['thickness'] * thickness_loss
+                )
                 g_loss.backward()
                 optimizer_G.step()
 
                 epoch_g_loss += g_loss.item()
+                epoch_g_adv_loss += g_adv_loss.item()
+                epoch_surrogate_loss += surrogate_loss.item()
+                epoch_thickness_loss += thickness_loss.item()
+                epoch_weighted_adv_loss += (loss_weights['adv'] * g_adv_loss).item()
+                epoch_weighted_surrogate_loss += (loss_weights['surrogate'] * surrogate_loss).item()
+                epoch_weighted_thickness_loss += (loss_weights['thickness'] * thickness_loss).item()
                 g_batch_count += 1
 
         avg_d_loss = epoch_d_loss / batch_count
         avg_g_loss = epoch_g_loss / g_batch_count if g_batch_count > 0 else 0.0
+        avg_g_adv_loss = epoch_g_adv_loss / g_batch_count if g_batch_count > 0 else 0.0
+        avg_surrogate_loss = epoch_surrogate_loss / g_batch_count if g_batch_count > 0 else 0.0
+        avg_thickness_loss = epoch_thickness_loss / g_batch_count if g_batch_count > 0 else 0.0
+        avg_weighted_adv_loss = epoch_weighted_adv_loss / g_batch_count if g_batch_count > 0 else 0.0
+        avg_weighted_surrogate_loss = epoch_weighted_surrogate_loss / g_batch_count if g_batch_count > 0 else 0.0
+        avg_weighted_thickness_loss = epoch_weighted_thickness_loss / g_batch_count if g_batch_count > 0 else 0.0
         avg_real_score = epoch_real_score / batch_count
         avg_fake_score = epoch_fake_score / batch_count
         avg_grad_norm = epoch_grad_norm / batch_count
 
         epoch_duration = time.time() - start_time
-        d_losses.append(avg_d_loss)
-        g_losses.append(avg_g_loss)
-        real_scores.append(avg_real_score)
-        fake_scores.append(avg_fake_score)
-        grad_norms.append(avg_grad_norm)
+        append_metrics_csv(
+            GAN_METRICS_PATH,
+            {
+                'epoch': epoch,
+                'd_loss': avg_d_loss,
+                'g_loss_total': avg_g_loss,
+                'g_adv_raw': avg_g_adv_loss,
+                'surrogate_raw': avg_surrogate_loss,
+                'thickness_raw': avg_thickness_loss,
+                'g_adv_weighted': avg_weighted_adv_loss,
+                'surrogate_weighted': avg_weighted_surrogate_loss,
+                'thickness_weighted': avg_weighted_thickness_loss,
+                'real_score': avg_real_score,
+                'fake_score': avg_fake_score,
+                'grad_norm': avg_grad_norm,
+                'w_adv': loss_weights['adv'],
+                'w_surrogate': loss_weights['surrogate'],
+                'w_thickness': loss_weights['thickness'],
+            },
+        )
 
         if epoch % 2 == 0:
             print(
                 f"[Epoch {epoch}/{epochs}] [Time: {epoch_duration:.2f}s] "
-                f"[D loss: {avg_d_loss:.4f}] [G loss: {avg_g_loss:.4f}]"
+                f"[D loss: {avg_d_loss:.4f}] [G loss: {avg_g_loss:.4f}] "
+                f"[G adv: {avg_g_adv_loss:.4f}] [Surr: {avg_surrogate_loss:.4f}] "
+                f"[Thick: {avg_thickness_loss:.4f}] "
+                f"[W adv: {loss_weights['adv']:.3f}] "
+                f"[W surr: {loss_weights['surrogate']:.3f}] "
+                f"[W thick: {loss_weights['thickness']:.3f}]"
             )
 
         if epoch % 5 == 0 and epoch > 0:
@@ -331,7 +519,7 @@ def train(resume_path=None):
             )
 
     save_checkpoint(generator, discriminator, epochs - 1, "model/gan_final.pt")
-    plot_metrics(d_losses, g_losses, real_scores, fake_scores, grad_norms, "model/loss_curve.png")
+    plot_gan_metrics(GAN_METRICS_PATH, GAN_LOSS_PLOT_PATH)
     print("Training finished and final model saved to model/gan_final.pt")
 
 

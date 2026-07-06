@@ -1,41 +1,39 @@
 import numpy as np
-from scipy.interpolate import interp1d
+import torch
+
 
 def calculate_relative_thickness(coords):
     """
-    Calculate the maximum relative thickness of an airfoil from its coordinates.
-    coords: (N, 2) array of coordinates (Selig format: 1->0->1)
+    Calculate relative thickness with the project-wide max-min definition.
+    coords: (N, 2) array of coordinates.
     returns: rel_thickness (float)
     """
     x = coords[:, 0]
     y = coords[:, 1]
-    
-    # Identify the leading edge (min x)
-    idx_le = np.argmin(x)
-    x_le, x_max = np.min(x), np.max(x)
-    chord = x_max - x_le
-    
+
+    chord = np.max(x) - np.min(x)
     if chord <= 0:
         return 0.0
-        
-    # Split into upper and lower surfaces
-    surf1_x, surf1_y = x[:idx_le+1], y[:idx_le+1]
-    surf2_x, surf2_y = x[idx_le:], y[idx_le:]
-    
-    # Create common x-stations for interpolation
-    x_test = np.linspace(x_le, x_max, 101)
-    
-    # Sort surfaces to ensure monotonic x for interpolation
-    s1 = np.argsort(surf1_x)
-    s2 = np.argsort(surf2_x)
-    
-    # Interpolate
-    y1_interp = np.interp(x_test, surf1_x[s1], surf1_y[s1])
-    y2_interp = np.interp(x_test, surf2_x[s2], surf2_y[s2])
-    
-    # Max difference
-    rel_thickness = np.max(np.abs(y1_interp - y2_interp)) / chord
+
+    rel_thickness = (np.max(y) - np.min(y)) / chord
     return float(rel_thickness)
+
+
+def calculate_relative_thickness_torch(coords):
+    """
+    Differentiable PyTorch version of calculate_relative_thickness.
+    coords: (B, N, 2) tensor of physical coordinates.
+    returns: (B,) tensor of relative thickness values.
+    """
+    if coords.dim() != 3 or coords.size(2) != 2:
+        raise ValueError(f"coords must have shape (B, N, 2), got {tuple(coords.shape)}")
+
+    x_values = coords[:, :, 0]
+    y_values = coords[:, :, 1]
+    chord = torch.amax(x_values, dim=1) - torch.amin(x_values, dim=1)
+    height = torch.amax(y_values, dim=1) - torch.amin(y_values, dim=1)
+    return height / (chord + 1e-8)
+
 
 def check_intersection(coords):
     """
