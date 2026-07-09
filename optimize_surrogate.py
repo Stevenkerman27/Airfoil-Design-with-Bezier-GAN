@@ -11,6 +11,7 @@ from train_surrogate import load_config, train_surrogate_from_config
 OPTUNA_CONFIG_KEY = 'optuna'
 SEARCH_SPACE_KEY = 'search_space'
 LOG_SCALE = 'log'
+LINEAR_SCALE = 'linear'
 
 
 def build_pruner(optuna_config):
@@ -28,6 +29,8 @@ def suggest_value(trial, name, spec):
         raise ValueError(f"Search space for {name} must be a list, got {type(spec)}")
     if len(spec) == 3 and spec[2] == LOG_SCALE:
         return trial.suggest_float(name, float(spec[0]), float(spec[1]), log=True)
+    if len(spec) == 3 and spec[2] == LINEAR_SCALE:
+        return trial.suggest_float(name, float(spec[0]), float(spec[1]))
     if len(spec) == 2 and all(isinstance(value, int) for value in spec):
         return trial.suggest_int(name, spec[0], spec[1])
     return trial.suggest_categorical(name, spec)
