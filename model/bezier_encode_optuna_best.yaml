@@ -1,17 +1,21 @@
-best_value: 0.002273646722301059
+best_value: 0.006713797210043289
 best_params:
-  num_control_points: 28
-  bezier_encode.lr: 0.00637541600546406
-  bezier_encode.iterations: 1000
-  bezier_encode.weight_reg: 0.00017996794125205336
-  bezier_encode.length_penalty: 0.03497168067586502
-  bezier_encode.leading_edge_window: 12
-  bezier_encode.leading_edge_weight_amplitude: 2.494695675573446
-best_trial_number: 16
+  bezier_encode.surface_control_points: 5
+  bezier_encode.lr: 0.005372273327003884
+  bezier_encode.iterations: 386
+  bezier_encode.weight_reg: 0.0007792224749560202
+  bezier_encode.length_penalty: 0.005746261451125304
+  bezier_encode.leading_edge_window: 18
+  bezier_encode.leading_edge_weight_amplitude: 4.7945748451806
+best_trial_number: 19
 best_metrics:
-  mean_mae: 0.002133646722301059
-  mean_mse: 1.9193899837603333e-05
-  mean_leading_edge_mae: 0.0057142062102650635
-  mean_leading_edge_mse: 6.0183095810605566e-05
-  max_point_error: 0.37365734577178955
-  num_control_points: 28
+  mean_mae: 0.001713797210043289
+  mean_mse: 1.0833034824810658e-05
+  mean_leading_edge_mae: 0.0017622593926485183
+  mean_leading_edge_mse: 1.1728275601456282e-05
+  max_point_error: 0.07113097608089447
+  total_control_points: 10
+  surface_control_points: 5
+  surface_control_point_counts:
+    upper: 5
+    lower: 5
