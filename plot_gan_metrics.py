@@ -16,17 +16,16 @@ METRIC_COLUMNS = [
     'd_loss',
     'g_loss_total',
     'g_adv_raw',
+    'surrogate_cm_raw',
+    'surrogate_cl_raw',
     'surrogate_raw',
-    'thickness_raw',
     'g_adv_weighted',
     'surrogate_weighted',
-    'thickness_weighted',
     'real_score',
     'fake_score',
     'grad_norm',
     'w_adv',
     'w_surrogate',
-    'w_thickness',
 ]
 
 
@@ -62,9 +61,10 @@ def plot_gan_metrics(metrics_path=DEFAULT_METRICS_PATH, output_path=DEFAULT_PLOT
     axes[0].legend()
     axes[0].grid(True)
 
-    axes[1].plot(epochs, column(rows, 'surrogate_weighted'), label='Surrogate Weighted')
-    axes[1].plot(epochs, column(rows, 'thickness_weighted'), label='Thickness Weighted')
-    axes[1].set_title('Generator Weighted Auxiliary Loss Terms')
+    axes[1].plot(epochs, column(rows, 'surrogate_cm_raw'), label='CM MSE')
+    axes[1].plot(epochs, column(rows, 'surrogate_cl_raw'), label='CL MSE')
+    axes[1].plot(epochs, column(rows, 'surrogate_weighted'), label='Weighted Surrogate')
+    axes[1].set_title('Generator CM/CL Auxiliary Loss')
     axes[1].set_xlabel('Epoch')
     axes[1].set_ylabel('Loss')
     axes[1].legend()

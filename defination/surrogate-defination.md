@@ -124,15 +124,30 @@
 
 1. 新建 `train_surrogate.py`。
 2. 使用固定随机种子进行样本级 8:1:1 划分。
-3. 损失函数采用可配置标签权重的加权 MSE，优化器采用 `Adam`。
+3. 损失函数采用可配置标签权重的加权 MSE，优化器采用 `Adam`，学习率采用 `CyclicLR` 的 `triangular2` 策略。
+   - `surrogate_clr_base_lr` 和 `surrogate_clr_max_lr` 由配置手动指定。
+   - 半周期步数为 `surrogate_clr_step_size_epochs * len(train_loader)`；每个 batch 的 `optimizer.step()` 后执行一次 scheduler step。
+   - CLR 关闭 momentum cycling，以兼容 Adam。
+   - 正式训练和 Optuna trial 使用相同 CLR 配置；Optuna 不搜索学习率边界。
 4. 每个 epoch 记录：
    - 训练 loss
    - 验证 loss
    - 训练 MAE
    - 验证 MAE
+   - 归一化目标空间中 `CM`、`CL`、`CD` 各自未加权 MSE
+   - 反归一化物理尺度中 `CM`、`CL`、`CD` 各自 MAE
+   - 学习率，以及训练批次全局梯度 L2 范数的均值和最大值（在 `backward()` 后、`optimizer.step()` 前计算）
 5. 每个 epoch 判断一次验证 loss 是否刷新最优模型；训练过程中最佳权重只保存在内存中。
 6. 训练结束后，将内存中的最佳模型保存到 `model/surrogate_best.pt`。
 7. 最终用最优模型在验证集绘图。
+
+## 学习率范围测试
+
+`lr_range_test.py` 从随机初始化开始，连续执行 `surrogate_lr_range_runs` 次独立测试。每次仅使用训练集 batch，以指数方式把学习率从 `surrogate_lr_range_start` 提升至 `surrogate_lr_range_end`。测试不保存模型或归一化统计量，也不固定模型初始化或 batch 打乱顺序。
+
+- `model/surrogate_lr_range.png` 使用线性学习率横轴绘制每次测试的 EMA loss 及其逐步均值；路径在脚本中固定，测试过程不保存逐 batch 指标文件。
+- 当 loss/梯度非有限，或 EMA loss 超过历史最优值的 `surrogate_lr_range_max_loss_multiplier` 倍时停止。
+- `base_lr` 取 EMA loss 开始持续下降的位置；`max_lr` 取最低点前、EMA loss 稳定上升前的保守值。
 
 ## 绘图输出
 
@@ -140,6 +155,7 @@
 
 - `model/surrogate_loss.png`：训练集和验证集 loss 曲线
 - `model/surrogate_error.png`：训练集和验证集 MAE 曲线
+- `model/surrogate_training_metrics.csv`：每个 epoch 的完整训练诊断指标；仅正式训练写入，Optuna trial 不生成此文件
 
 验证集预测输出：
 

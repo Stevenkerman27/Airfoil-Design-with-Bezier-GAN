@@ -1,5 +1,5 @@
 @echo off
-set CONDA_PATH=D:\Software\anaconda
+set CONDA_PATH=C:\Users\zyx20\anaconda3
 set ENV_NAME=myml
 set PROJECT_DIR=%~dp0
 

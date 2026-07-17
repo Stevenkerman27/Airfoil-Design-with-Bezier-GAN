@@ -4,6 +4,12 @@ import yaml
 import argparse
 from model import Generator, Discriminator
 import numpy as np
+from train import (
+    build_surrogate_conditions,
+    load_frozen_surrogate,
+    load_gan_auxiliary_stats,
+    normalize_surrogate_coords,
+)
 from utils import calculate_relative_thickness
 from foildata.xfoil import run_xfoil_single
 
@@ -12,7 +18,7 @@ NUM_GENERATE = 10
 def generate_and_evaluate(model_path, tag, user_label_list):
     print(f"\n--- Generating for {tag} using {model_path} ---")
     print(f"User defined label: {user_label_list}")
-    
+
     alpha_input = user_label_list[0]
     re_input = user_label_list[1]
     
@@ -52,18 +58,19 @@ def generate_and_evaluate(model_path, tag, user_label_list):
     
     generator.eval()
     discriminator.eval()
+    surrogate = load_frozen_surrogate(config, device)
+    auxiliary_stats = load_gan_auxiliary_stats(config, device)
     
     # 加载条件归一化参数
-    norm_params = torch.load('model/cond_norm.pt', map_location=device, weights_only=True)
-    cond_mean = norm_params['mean'].to(device)
-    cond_std = norm_params['std'].to(device)
+    cond_mean = auxiliary_stats['gan_cond_mean']
+    cond_std = auxiliary_stats['gan_cond_std']
 
     # 加载坐标归一化参数 (用于反归一化)
-    coord_norm_params = torch.load('model/coord_norm.pt', map_location=device, weights_only=True)
-    x_min = coord_norm_params['x_min'].to(device)
-    x_max = coord_norm_params['x_max'].to(device)
-    y_min = coord_norm_params['y_min'].to(device)
-    y_max = coord_norm_params['y_max'].to(device)
+    gan_coord_stats = auxiliary_stats['gan_coord']
+    x_min = gan_coord_stats['x_min']
+    x_max = gan_coord_stats['x_max']
+    y_min = gan_coord_stats['y_min']
+    y_max = gan_coord_stats['y_max']
     
     # 处理用户输入的标签
     user_label = torch.tensor(user_label_list, dtype=torch.float32).unsqueeze(0).to(device)
@@ -96,24 +103,57 @@ def generate_and_evaluate(model_path, tag, user_label_list):
     # 对坐标进行反归一化
     generated_airfoils[:, :, 0] = generated_airfoils[:, :, 0] * (x_max - x_min + 1e-8) + x_min
     generated_airfoils[:, :, 1] = generated_airfoils[:, :, 1] * (y_max - y_min + 1e-8) + y_min
+
+    with torch.no_grad():
+        surrogate_coords = normalize_surrogate_coords(
+            generated_airfoils,
+            auxiliary_stats['surrogate_coord'],
+        )
+        physical_conditions = user_label.expand(NUM_GENERATE, -1)
+        surrogate_conditions = build_surrogate_conditions(
+            physical_conditions,
+            auxiliary_stats,
+        )
+        surrogate_targets = surrogate(surrogate_coords, surrogate_conditions)
+        surrogate_targets = (
+            surrogate_targets * auxiliary_stats['surrogate_target_std']
+            + auxiliary_stats['surrogate_target_mean']
+        )
     
     generated_airfoils = generated_airfoils.cpu().numpy()
     scores = scores.view(-1).cpu().numpy()
+    surrogate_targets = surrogate_targets.cpu().numpy()
     
     target_cl = user_label_list[2]
-    target_thick = user_label_list[3]
-    target_cm = user_label_list[4]
-    
-    thick_errs = []
+    target_cm = user_label_list[3]
+    if target_cl == 0 or target_cm == 0:
+        raise ValueError(
+            'Percentage error is undefined when the target CL or CM is zero.'
+        )
+    cm_weight, cl_weight = config['gan_surrogate_target_loss_weights']
+
     cl_errs = []
     cm_errs = []
+    cl_pct_errs = []
+    cm_pct_errs = []
+    weighted_errs = []
+    surrogate_cl_target_errs = []
+    surrogate_cm_target_errs = []
+    surrogate_cl_xfoil_errs = []
+    surrogate_cm_xfoil_errs = []
     
-    print(f"{'No.':<4} | {'Score':<8} | {'Thick':<7} | {'T_Err%':<8} | {'CL':<8} | {'CL_Err%':<8} | {'CM':<8} | {'CM_Err%':<8} | {'CD':<8} | {'Status'}")
-    print("-" * 112)
+    print(f"{'No.':<4} | {'Score':<8} | {'Thick':<7} | {'XF CL':<8} | {'Surr CL':<8} | {'XF CL Abs':<9} | {'XF CL %':<8} | {'S-X CL':<8} | {'XF CM':<8} | {'Surr CM':<8} | {'XF CM Abs':<9} | {'XF CM %':<8} | {'S-X CM':<8} | {'Weighted':<9} | {'CD':<8} | {'Status'}")
+    print("-" * 204)
     
     for i in range(NUM_GENERATE):
         score = scores[i]
         airfoil_coords = generated_airfoils[i]
+        surrogate_cm = surrogate_targets[i, 0]
+        surrogate_cl = surrogate_targets[i, 1]
+        surrogate_cl_target_err = abs(surrogate_cl - target_cl)
+        surrogate_cm_target_err = abs(surrogate_cm - target_cm)
+        surrogate_cl_target_errs.append(surrogate_cl_target_err)
+        surrogate_cm_target_errs.append(surrogate_cm_target_err)
         
         # 计算生成翼型的实际厚度
         thickness = calculate_relative_thickness(airfoil_coords)
@@ -121,23 +161,34 @@ def generate_and_evaluate(model_path, tag, user_label_list):
         # 调用 XFOIL 进行气动分析
         xfoil_res = run_xfoil_single(airfoil_coords, re_input, alpha_input, return_all=True)
         
-        # 计算百分比误差
-        thick_err = (thickness - target_thick) / target_thick * 100
-        thick_errs.append(abs(thick_err))
-        
         if xfoil_res:
             cl = xfoil_res.get('CL', np.nan)
-            cl_err = (cl - target_cl) / target_cl * 100
-            cl_errs.append(abs(cl_err))
+            cl_err = abs(cl - target_cl)
+            cl_pct_err = cl_err / abs(target_cl) * 100
+            cl_errs.append(cl_err)
+            cl_pct_errs.append(cl_pct_err)
             cd = xfoil_res.get('CD', np.nan)
             cm = xfoil_res.get('CM', np.nan)
-            cm_err = (cm - target_cm) / target_cm * 100
-            cm_errs.append(abs(cm_err))
+            cm_err = abs(cm - target_cm)
+            cm_pct_err = cm_err / abs(target_cm) * 100
+            cm_errs.append(cm_err)
+            cm_pct_errs.append(cm_pct_err)
+            surrogate_cl_xfoil_err = abs(surrogate_cl - cl)
+            surrogate_cm_xfoil_err = abs(surrogate_cm - cm)
+            surrogate_cl_xfoil_errs.append(surrogate_cl_xfoil_err)
+            surrogate_cm_xfoil_errs.append(surrogate_cm_xfoil_err)
+            weighted_err = cm_weight * cm_err + cl_weight * cl_err
+            weighted_errs.append(weighted_err)
             status = "Success"
         else:
             cl = cd = cm = np.nan
             cl_err = np.nan
+            cl_pct_err = np.nan
             cm_err = np.nan
+            cm_pct_err = np.nan
+            surrogate_cl_xfoil_err = np.nan
+            surrogate_cm_xfoil_err = np.nan
+            weighted_err = np.nan
             status = "Failed"
             
         # 按照要求格式命名文件：type_Score_Thickness_Cl_Cd_Cm
@@ -150,23 +201,41 @@ def generate_and_evaluate(model_path, tag, user_label_list):
             for pt in airfoil_coords:
                 f.write(f"{pt[0]:.6f} {pt[1]:.6f}\n")
         
-        print(f"{i+1:<4} | {score:8.4f} | {thickness:7.4f} | {thick_err:7.2f}% | {cl:8.4f} | {cl_err:7.2f}% | {cm:8.4f} | {cm_err:7.2f}% | {cd:8.5f} | {status}")
+        print(f"{i+1:<4} | {score:8.4f} | {thickness:7.4f} | {cl:8.4f} | {surrogate_cl:8.4f} | {cl_err:9.4f} | {cl_pct_err:7.2f}% | {surrogate_cl_xfoil_err:8.4f} | {cm:8.4f} | {surrogate_cm:8.4f} | {cm_err:9.4f} | {cm_pct_err:7.2f}% | {surrogate_cm_xfoil_err:8.4f} | {weighted_err:9.4f} | {cd:8.5f} | {status}")
         
     # 计算总体误差 (MAE)
-    avg_thick_err = np.mean(thick_errs)
     avg_cl_err = np.mean(cl_errs) if cl_errs else np.nan
     avg_cm_err = np.mean(cm_errs) if cm_errs else np.nan
-    
-    print("-" * 112)
-    print(f"Overall Batch MAE: Thickness Error: {avg_thick_err:.2f}%, CL Error: {avg_cl_err:.2f}%, CM Error: {avg_cm_err:.2f}%")
+    avg_cl_pct_err = np.mean(cl_pct_errs) if cl_pct_errs else np.nan
+    avg_cm_pct_err = np.mean(cm_pct_errs) if cm_pct_errs else np.nan
+    avg_weighted_err = np.mean(weighted_errs) if weighted_errs else np.nan
+    avg_surrogate_cl_target_err = np.mean(surrogate_cl_target_errs)
+    avg_surrogate_cm_target_err = np.mean(surrogate_cm_target_errs)
+    avg_surrogate_cl_xfoil_err = np.mean(surrogate_cl_xfoil_errs) if surrogate_cl_xfoil_errs else np.nan
+    avg_surrogate_cm_xfoil_err = np.mean(surrogate_cm_xfoil_errs) if surrogate_cm_xfoil_errs else np.nan
+
+    print("-" * 204)
+    print(
+        f"Overall Batch MAE: CL={avg_cl_err:.5f} ({avg_cl_pct_err:.2f}%), "
+        f"CM={avg_cm_err:.5f} ({avg_cm_pct_err:.2f}%), "
+        f"Weighted={avg_weighted_err:.5f}"
+    )
+    print(
+        f"Surrogate MAE to target: CL={avg_surrogate_cl_target_err:.5f}, "
+        f"CM={avg_surrogate_cm_target_err:.5f}"
+    )
+    print(
+        f"Surrogate MAE to XFoil: CL={avg_surrogate_cl_xfoil_err:.5f}, "
+        f"CM={avg_surrogate_cm_xfoil_err:.5f}"
+    )
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Generate airfoils using a trained CWGAN-GP model")
     parser.add_argument("--model", "-m", type=str, default="model/gan_final.pt", help="Path to model checkpoint")
     parser.add_argument("--tag", type=str, default="GAN", help="Tag prefix used in generated filenames")
-    parser.add_argument("--labels", "-l", type=float, nargs=5, help="Labels: Alpha Re Cl Thickness Cm")
+    parser.add_argument("--labels", "-l", type=float, nargs=4, help="Labels: Alpha Re Cl Cm")
     args = parser.parse_args()
     
-    custom_label = args.labels if args.labels else [2.0, 200000.0, 0.6, 0.12, -0.08]
+    custom_label = args.labels if args.labels else [2.0, 200000.0, 0.6, -0.08]
     
     generate_and_evaluate(args.model, args.tag, user_label_list=custom_label)

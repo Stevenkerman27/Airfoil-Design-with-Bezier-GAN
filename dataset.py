@@ -2,8 +2,11 @@ import torch
 from torch.utils.data import Dataset
 
 class AirfoilDataset(Dataset):
-    def __init__(self, data_path, cond_norm_path="model/cond_norm.pt", coord_norm_path="model/coord_norm.pt"):
-        raw_data = torch.load(data_path)
+    def __init__(self, data_path, sample_indices, cond_norm_path, coord_norm_path):
+        all_raw_data = torch.load(data_path, weights_only=True)
+        if len(sample_indices) == 0:
+            raise ValueError('GAN sample_indices must not be empty')
+        raw_data = [all_raw_data[index] for index in sample_indices]
         
         # 1. Normalize conditions (labels) - Keep Z-score for conditions
         # Ensure floating point for mean/std calculation
@@ -56,7 +59,13 @@ if __name__ == "__main__":
     data_path = "model/airfoil_dataset.pt"
     if os.path.exists(data_path):
         print(f"Initializing dataset from {data_path}...")
-        ds = AirfoilDataset(data_path)
+        raw_data = torch.load(data_path, weights_only=True)
+        ds = AirfoilDataset(
+            data_path,
+            list(range(len(raw_data))),
+            'model/cond_norm.pt',
+            'model/coord_norm.pt',
+        )
         print("Dataset initialized and stats saved to model/cond_norm.pt and model/coord_norm.pt")
         
         # Verify stats

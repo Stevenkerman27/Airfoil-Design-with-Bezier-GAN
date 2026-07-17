@@ -16,6 +16,7 @@ from train_surrogate import (
     resolve_device,
     split_dataset,
 )
+from surrogate_split import resolve_surrogate_dataset_config
 
 
 EVAL_PLOT_PATHS = {
@@ -96,13 +97,14 @@ def save_metrics(path, metrics):
 def run_evaluation(config_path, split_name, model_path=None, metrics_path=None):
     config = load_config(config_path)
     device = resolve_device(config)
+    dataset_name, dataset_config = resolve_surrogate_dataset_config(config)
     checkpoint_path = model_path
     if checkpoint_path is None:
-        checkpoint_path = config['surrogate_best_model_path']
+        checkpoint_path = dataset_config['best_model_path']
 
     dataset = AirfoilSurrogateDataset(
-        config['surrogate_dataset_path'],
-        config['surrogate_norm_path'],
+        dataset_config['data_path'],
+        dataset_config['norm_path'],
         config,
         save_norm=False,
     )
@@ -121,6 +123,7 @@ def run_evaluation(config_path, split_name, model_path=None, metrics_path=None):
 
     metrics = {
         'split': split_name,
+        'dataset_name': dataset_name,
         'sample_count': len(eval_set),
         'model_path': checkpoint_path,
         'checkpoint_epoch': int(checkpoint['epoch']),
@@ -148,7 +151,7 @@ def run_evaluation(config_path, split_name, model_path=None, metrics_path=None):
 
     output_metrics_path = metrics_path
     if output_metrics_path is None:
-        output_metrics_path = f"model/surrogate_eval_{split_name}_metrics.yaml"
+        output_metrics_path = f"model/surrogate_{dataset_name}_eval_{split_name}_metrics.yaml"
     save_metrics(output_metrics_path, metrics)
 
     print(f"Evaluated split: {split_name}")

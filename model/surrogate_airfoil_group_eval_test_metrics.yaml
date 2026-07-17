@@ -1,0 +1,24 @@
+split: test
+dataset_name: airfoil_group
+sample_count: 5544
+model_path: model/surrogate_airfoil_group_best.pt
+checkpoint_epoch: 40
+checkpoint_val_loss: 0.23332437277161355
+eval_loss: 0.26010590744065654
+eval_mae: 0.013879863335215754
+target_order:
+- CM
+- CL
+- CD
+per_target_mae:
+  CM: 0.006552579812705517
+  CL: 0.03378542140126228
+  CD: 0.001347950310446322
+per_target_rmse:
+  CM: 0.010263464413583279
+  CL: 0.05269771069288254
+  CD: 0.0023451494053006172
+per_target_r2:
+  CM: 0.9545288681983948
+  CL: 0.9733332991600037
+  CD: 0.8832809925079346

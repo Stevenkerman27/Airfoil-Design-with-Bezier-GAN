@@ -1,4 +1,5 @@
 import argparse
+import csv
 import os
 
 import matplotlib
@@ -10,19 +11,34 @@ import yaml
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from model import AerodynamicSurrogate
+from surrogate_split import load_split_indices, resolve_surrogate_dataset_config
 
 
-DATASET_LABEL_NAMES = ['alpha', 'Re', 'CL', 'Thickness', 'CM']
+DATASET_LABEL_NAMES = ['alpha', 'Re', 'CL', 'CM']
 DATASET_CD_KEY = 'cd'
 SURROGATE_CONDITION_NAMES = ['alpha', 'Re']
 SURROGATE_TARGET_NAMES = ['CM', 'CL', 'CD']
 LOSS_PLOT_PATH = 'model/surrogate_loss.png'
 ERROR_PLOT_PATH = 'model/surrogate_error.png'
+TRAINING_METRICS_PATH = 'model/surrogate_training_metrics.csv'
+CLR_CONFIG_KEYS = (
+    'surrogate_clr_mode',
+    'surrogate_clr_base_lr',
+    'surrogate_clr_max_lr',
+    'surrogate_clr_step_size_epochs',
+)
+CLR_MODE = 'triangular2'
 VALIDATION_PLOT_PATHS = {
     'CL': 'model/surrogate_val_cl.png',
     'CD': 'model/surrogate_val_cd.png',
     'CM': 'model/surrogate_val_cm.png',
 }
+TRAINING_METRIC_FIELDS = (
+    ['epoch', 'train_loss', 'val_loss', 'train_mae', 'val_mae']
+    + [f'{split}_{target.lower()}_mse' for split in ['train', 'val'] for target in SURROGATE_TARGET_NAMES]
+    + [f'{split}_{target.lower()}_mae' for split in ['train', 'val'] for target in SURROGATE_TARGET_NAMES]
+    + ['learning_rate', 'train_grad_norm_mean', 'train_grad_norm_max']
+)
 
 
 class WeightedMSELoss(torch.nn.Module):
@@ -45,7 +61,7 @@ class AirfoilSurrogateDataset(Dataset):
         raw_data = torch.load(data_path, weights_only=True)
         if len(raw_data) == 0:
             raise ValueError(f"Dataset is empty: {data_path}")
-        self.split_indices = build_surrogate_split_indices(len(raw_data), config)
+        self.dataset_name, self.split_indices = load_split_indices(raw_data, config)
 
         self.label_names = DATASET_LABEL_NAMES
         self.cd_key = DATASET_CD_KEY
@@ -73,6 +89,7 @@ class AirfoilSurrogateDataset(Dataset):
             os.makedirs(os.path.dirname(norm_path), exist_ok=True)
             torch.save({
                 'source_split': 'train',
+                'dataset_name': self.dataset_name,
                 'split_seed': config['surrogate_seed'],
                 'split_ratio': config['surrogate_split_ratio'],
                 'split_counts': {
@@ -158,36 +175,7 @@ def resolve_device(config):
     raise ValueError(f"Unknown device configuration: {device_cfg}")
 
 
-def build_surrogate_split_indices(dataset_size, config):
-    split_ratio = config['surrogate_split_ratio']
-    if len(split_ratio) != 3:
-        raise ValueError('surrogate_split_ratio must contain train, val, test ratios')
-
-    total_ratio = sum(split_ratio)
-    if abs(total_ratio - 1.0) > 1e-6:
-        raise ValueError(f"surrogate_split_ratio must sum to 1.0, got {total_ratio}")
-
-    train_size = int(dataset_size * split_ratio[0])
-    val_size = int(dataset_size * split_ratio[1])
-    test_size = dataset_size - train_size - val_size
-    if min(train_size, val_size, test_size) <= 0:
-        raise ValueError(
-            f"Invalid split sizes: train={train_size}, val={val_size}, test={test_size}"
-        )
-
-    generator = torch.Generator().manual_seed(config['surrogate_seed'])
-    indices = torch.randperm(dataset_size, generator=generator).tolist()
-    return {
-        'train': indices[:train_size],
-        'val': indices[train_size:train_size + val_size],
-        'test': indices[train_size + val_size:],
-    }
-
-
 def split_dataset(dataset, config):
-    expected_indices = build_surrogate_split_indices(len(dataset), config)
-    if dataset.split_indices != expected_indices:
-        raise ValueError('Dataset split indices do not match current config')
     return (
         Subset(dataset, dataset.split_indices['train']),
         Subset(dataset, dataset.split_indices['val']),
@@ -200,6 +188,9 @@ def evaluate(model, dataloader, criterion, dataset, device):
     total_loss = 0.0
     total_mae = 0.0
     batch_count = 0
+    sample_count = 0
+    target_squared_error_sum = torch.zeros(len(SURROGATE_TARGET_NAMES), device=device)
+    target_absolute_error_sum = torch.zeros(len(SURROGATE_TARGET_NAMES), device=device)
     predictions = []
     targets = []
 
@@ -219,6 +210,9 @@ def evaluate(model, dataloader, criterion, dataset, device):
             total_loss += loss.item()
             total_mae += mae.item()
             batch_count += 1
+            sample_count += target.size(0)
+            target_squared_error_sum += torch.sum((pred - target) ** 2, dim=0)
+            target_absolute_error_sum += torch.sum(torch.abs(pred_real - target_real), dim=0)
             predictions.append(pred_real.cpu())
             targets.append(target_real.cpu())
 
@@ -228,16 +222,22 @@ def evaluate(model, dataloader, criterion, dataset, device):
     return {
         'loss': total_loss / batch_count,
         'mae': total_mae / batch_count,
+        'per_target_mse': target_squared_error_sum.div(sample_count).cpu(),
+        'per_target_mae': target_absolute_error_sum.div(sample_count).cpu(),
         'predictions': torch.cat(predictions, dim=0),
         'targets': torch.cat(targets, dim=0),
     }
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, dataset, device):
+def train_one_epoch(model, dataloader, criterion, optimizer, lr_scheduler, dataset, device):
     model.train()
     total_loss = 0.0
     total_mae = 0.0
     batch_count = 0
+    sample_count = 0
+    target_squared_error_sum = torch.zeros(len(SURROGATE_TARGET_NAMES), device=device)
+    target_absolute_error_sum = torch.zeros(len(SURROGATE_TARGET_NAMES), device=device)
+    gradient_norms = []
 
     for coords, conditions, target in dataloader:
         coords = coords.to(device)
@@ -248,7 +248,9 @@ def train_one_epoch(model, dataloader, criterion, optimizer, dataset, device):
         pred = model(coords, conditions)
         loss = criterion(pred, target)
         loss.backward()
+        gradient_norms.append(compute_global_gradient_norm(model.parameters()))
         optimizer.step()
+        lr_scheduler.step()
 
         with torch.no_grad():
             pred_real = dataset.denormalize_targets(pred)
@@ -258,11 +260,65 @@ def train_one_epoch(model, dataloader, criterion, optimizer, dataset, device):
         total_loss += loss.item()
         total_mae += mae.item()
         batch_count += 1
+        sample_count += target.size(0)
+        target_squared_error_sum += torch.sum((pred.detach() - target) ** 2, dim=0)
+        target_absolute_error_sum += torch.sum(torch.abs(pred_real - target_real), dim=0)
 
     if batch_count == 0:
         raise ValueError('Training dataloader produced zero batches')
 
-    return total_loss / batch_count, total_mae / batch_count
+    return {
+        'loss': total_loss / batch_count,
+        'mae': total_mae / batch_count,
+        'per_target_mse': target_squared_error_sum.div(sample_count).cpu(),
+        'per_target_mae': target_absolute_error_sum.div(sample_count).cpu(),
+        'gradient_norm_mean': float(np.mean(gradient_norms)),
+        'gradient_norm_max': float(np.max(gradient_norms)),
+    }
+
+
+def compute_global_gradient_norm(parameters):
+    squared_norm = 0.0
+    for parameter in parameters:
+        if parameter.grad is not None:
+            squared_norm += torch.sum(parameter.grad.detach() ** 2).item()
+    return squared_norm ** 0.5
+
+
+def initialize_training_metrics(path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8', newline='') as f:
+        csv.DictWriter(f, fieldnames=TRAINING_METRIC_FIELDS).writeheader()
+
+
+def append_training_metrics(path, metrics):
+    missing_fields = set(TRAINING_METRIC_FIELDS) - set(metrics)
+    extra_fields = set(metrics) - set(TRAINING_METRIC_FIELDS)
+    if missing_fields or extra_fields:
+        raise ValueError(
+            f'Training metric fields do not match schema: missing={sorted(missing_fields)}, '
+            f'extra={sorted(extra_fields)}'
+        )
+    with open(path, 'a', encoding='utf-8', newline='') as f:
+        csv.DictWriter(f, fieldnames=TRAINING_METRIC_FIELDS).writerow(metrics)
+
+
+def build_epoch_metrics(epoch, train_result, val_result, optimizer):
+    metrics = {
+        'epoch': epoch + 1,
+        'train_loss': train_result['loss'],
+        'val_loss': val_result['loss'],
+        'train_mae': train_result['mae'],
+        'val_mae': val_result['mae'],
+        'learning_rate': optimizer.param_groups[0]['lr'],
+        'train_grad_norm_mean': train_result['gradient_norm_mean'],
+        'train_grad_norm_max': train_result['gradient_norm_max'],
+    }
+    for split_name, result in [('train', train_result), ('val', val_result)]:
+        for index, target_name in enumerate(SURROGATE_TARGET_NAMES):
+            metrics[f'{split_name}_{target_name.lower()}_mse'] = float(result['per_target_mse'][index])
+            metrics[f'{split_name}_{target_name.lower()}_mae'] = float(result['per_target_mae'][index])
+    return metrics
 
 
 def plot_training_curves(train_values, val_values, ylabel, title, path):
@@ -312,8 +368,8 @@ def plot_prediction_scatter(targets, predictions, target_index, title, path):
     print(f"Saved plot to {path}")
 
 
-def save_checkpoint(model, config, dataset, epoch, val_loss):
-    path = config['surrogate_best_model_path']
+def save_checkpoint(model, best_model_path, norm_path, config, dataset, epoch, val_loss):
+    path = best_model_path
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save({
         'model_state_dict': model.state_dict(),
@@ -322,7 +378,7 @@ def save_checkpoint(model, config, dataset, epoch, val_loss):
         'target_names': dataset.target_names,
         'condition_names': dataset.condition_names,
         'target_loss_weights': config['surrogate_target_loss_weights'],
-        'norm_path': config['surrogate_norm_path'],
+        'norm_path': norm_path,
     }, path)
     print(f"Saved best surrogate model to {path}")
 
@@ -349,19 +405,52 @@ def build_weighted_mse_loss(config, device):
     return WeightedMSELoss(weights)
 
 
+def build_surrogate_clr(config, optimizer, batches_per_epoch):
+    missing_keys = [key for key in CLR_CONFIG_KEYS if key not in config]
+    if missing_keys:
+        raise ValueError(f'Surrogate CLR configuration is missing keys: {missing_keys}')
+    mode = config['surrogate_clr_mode']
+    base_lr = float(config['surrogate_clr_base_lr'])
+    max_lr = float(config['surrogate_clr_max_lr'])
+    step_size_epochs = config['surrogate_clr_step_size_epochs']
+    if mode != CLR_MODE:
+        raise ValueError(f'surrogate_clr_mode must be {CLR_MODE}, got {mode}')
+    if base_lr <= 0.0 or max_lr <= base_lr:
+        raise ValueError(
+            'Surrogate CLR bounds must satisfy 0 < base_lr < max_lr, '
+            f'got {base_lr}, {max_lr}'
+        )
+    if not isinstance(step_size_epochs, int) or step_size_epochs <= 0:
+        raise ValueError(
+            'surrogate_clr_step_size_epochs must be a positive integer, '
+            f'got {step_size_epochs}'
+        )
+    if batches_per_epoch <= 0:
+        raise ValueError(f'batches_per_epoch must be positive, got {batches_per_epoch}')
+    return torch.optim.lr_scheduler.CyclicLR(
+        optimizer,
+        base_lr=base_lr,
+        max_lr=max_lr,
+        step_size_up=step_size_epochs * batches_per_epoch,
+        mode=mode,
+        cycle_momentum=False,
+    )
+
+
 def train_surrogate_from_config(config, epochs_override=None, save_artifacts=True, trial=None):
     device = resolve_device(config)
     print(f"Using device: {device}")
 
+    dataset_name, dataset_config = resolve_surrogate_dataset_config(config)
     dataset = AirfoilSurrogateDataset(
-        config['surrogate_dataset_path'],
-        config['surrogate_norm_path'],
+        dataset_config['data_path'],
+        dataset_config['norm_path'],
         config,
         save_norm=save_artifacts,
     )
     train_set, val_set, test_set = split_dataset(dataset, config)
     print(
-        f"Dataset split: train={len(train_set)}, "
+        f"Dataset '{dataset_name}' split: train={len(train_set)}, "
         f"validation={len(val_set)}, test={len(test_set)}"
     )
 
@@ -377,9 +466,10 @@ def train_surrogate_from_config(config, epochs_override=None, save_artifacts=Tru
     criterion = build_weighted_mse_loss(config, device)
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=float(config['surrogate_lr']),
+        lr=float(config['surrogate_clr_base_lr']),
         weight_decay=float(config['surrogate_weight_decay']),
     )
+    lr_scheduler = build_surrogate_clr(config, optimizer, len(train_loader))
 
     epochs = config['surrogate_epochs']
     if epochs_override is not None:
@@ -394,21 +484,31 @@ def train_surrogate_from_config(config, epochs_override=None, save_artifacts=Tru
     best_epoch = None
     best_model_state = None
 
+    if save_artifacts:
+        initialize_training_metrics(TRAINING_METRICS_PATH)
+
     for epoch in range(epochs):
-        train_loss, train_mae = train_one_epoch(
+        train_result = train_one_epoch(
             model,
             train_loader,
             criterion,
             optimizer,
+            lr_scheduler,
             dataset,
             device,
         )
         val_result = evaluate(model, val_loader, criterion, dataset, device)
 
-        train_losses.append(train_loss)
+        train_losses.append(train_result['loss'])
         val_losses.append(val_result['loss'])
-        train_errors.append(train_mae)
+        train_errors.append(train_result['mae'])
         val_errors.append(val_result['mae'])
+
+        if save_artifacts:
+            append_training_metrics(
+                TRAINING_METRICS_PATH,
+                build_epoch_metrics(epoch, train_result, val_result, optimizer),
+            )
 
         if val_result['loss'] < best_val_loss:
             best_val_loss = val_result['loss']
@@ -425,8 +525,8 @@ def train_surrogate_from_config(config, epochs_override=None, save_artifacts=Tru
         if epoch % 5 == 0 or epoch == epochs - 1:
             print(
                 f"[Epoch {epoch + 1}/{epochs}] "
-                f"[Train loss: {train_loss:.6f}] [Val loss: {val_result['loss']:.6f}] "
-                f"[Train MAE: {train_mae:.6f}] [Val MAE: {val_result['mae']:.6f}]"
+                f"[Train loss: {train_result['loss']:.6f}] [Val loss: {val_result['loss']:.6f}] "
+                f"[Train MAE: {train_result['mae']:.6f}] [Val MAE: {val_result['mae']:.6f}]"
             )
 
     if best_model_state is None:
@@ -435,7 +535,15 @@ def train_surrogate_from_config(config, epochs_override=None, save_artifacts=Tru
     model.load_state_dict(best_model_state)
 
     if save_artifacts:
-        save_checkpoint(model, config, dataset, best_epoch, best_val_loss)
+        save_checkpoint(
+            model,
+            dataset_config['best_model_path'],
+            dataset_config['norm_path'],
+            config,
+            dataset,
+            best_epoch,
+            best_val_loss,
+        )
 
         plot_training_curves(
             train_losses,

@@ -16,7 +16,7 @@ def test_discriminator_forward():
         'disc_conv2_kernel': 11,
         'disc_conv2_channels': 16,
         'disc_conv2_stride': 3,
-        'cond_dim': 5,
+        'cond_dim': 4,
         'gen_hid_fun': 'LeakyRELU'
     }
     
@@ -25,7 +25,7 @@ def test_discriminator_forward():
     
     # input coords shape: (batch_size, num_output_points * 2)
     coords = torch.randn(batch_size, 100 * 2)
-    cond = torch.randn(batch_size, 5)
+    cond = torch.randn(batch_size, 4)
     
     output = model(coords, cond)
     

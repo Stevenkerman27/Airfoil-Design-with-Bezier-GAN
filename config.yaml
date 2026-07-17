@@ -50,17 +50,17 @@ disc_conv_channels: 16
 disc_conv2_kernel: 11
 disc_conv2_channels: 16
 disc_conv2_stride: 2
-cond_dim: 5
+cond_dim: 4
 lr: 2e-4
-epochs: 120
+epochs: 150
 n_critic: 3
 lambda_gp: 10
-gan_aux_start_epoch: 30
-gan_aux_ramp_epochs: 10
-gan_adv_loss_final_weight: 0.1
-gan_surrogate_loss_weight: 20.0
-gan_thickness_loss_weight: 1.0
-batch_size: 16
+gan_aux_start_epoch: 40
+gan_aux_ramp_epochs: 20
+gan_adv_loss_final_weight: 0.2
+gan_surrogate_loss_weight: 25.0
+gan_surrogate_target_loss_weights: [10.0, 1.0]  # 顺序为 [CM, CL]
+batch_size: 32
 device: cuda  # 设置计算设备: auto (自动选择), cuda, 或 cpu
 max_workers: 16
 max_Cd: 0.05
@@ -69,32 +69,58 @@ cl_noise_std: 0.1  # 升力系数生成时的随机噪声标准差
 eval_var_weight: 0.05  # 评估时不准确度计算中方差项的权重系数
 surrogate_cond_dim: 2
 surrogate_out_dim: 3
-surrogate_hid_node: 256
+surrogate_hid_node: 512
 surrogate_hid_layer: 3
-surrogate_lr: 0.0006
-surrogate_epochs: 200
-surrogate_batch_size: 16
+surrogate_conv1_channels: 32
+surrogate_conv1_kernel: 7
+surrogate_conv2_channels: 16
+surrogate_conv2_kernel: 7
+surrogate_conv2_stride: 4
+surrogate_epochs: 96
+surrogate_batch_size: 32
 surrogate_split_ratio: [0.8, 0.1, 0.1]
 surrogate_seed: 20260704
-surrogate_weight_decay: 1e-6
-surrogate_target_loss_weights: [1.0, 1.0, 2.0]  # 顺序为 [CM, CL, CD]
-surrogate_dataset_path: model/airfoil_dataset.pt
-surrogate_norm_path: model/surrogate_norm.pt
-surrogate_best_model_path: model/surrogate_best.pt
+surrogate_weight_decay: 6e-7
+surrogate_target_loss_weights: [1.0, 1.0, 6.0]  # 顺序为 [CM, CL, CD]
+surrogate_clr_mode: triangular2
+surrogate_clr_base_lr: 2e-4
+surrogate_clr_max_lr: 5e-3
+surrogate_clr_step_size_epochs: 4
+surrogate_lr_range_start: 1e-4
+surrogate_lr_range_end: 8e-3
+surrogate_lr_range_epochs: 1
+surrogate_lr_range_runs: 5
+surrogate_lr_range_ema_beta: 0.98
+surrogate_lr_range_max_loss_multiplier: 4.0
+surrogate_dataset_name: airfoil_group
+surrogate_datasets:
+  random_sample:
+    data_path: model/airfoil_dataset.pt
+    split_path: model/surrogate_random_sample_split.pt
+    split_strategy: random_sample
+    norm_path: model/surrogate_norm.pt
+    best_model_path: model/surrogate_best.pt
+  airfoil_group:
+    data_path: model/airfoil_dataset.pt
+    split_path: model/surrogate_airfoil_group_split.pt
+    split_strategy: airfoil_group
+    norm_path: model/surrogate_airfoil_group_norm.pt
+    best_model_path: model/surrogate_airfoil_group_best.pt
 optuna:
   study_name: surrogate_hpo
-  n_trials: 30
-  trial_epochs: 80
+  n_trials: 50
+  trial_epochs: 100
   direction: minimize
   pruner: median
-  warmup_epochs: 20
+  warmup_epochs: 25
   best_params_path: model/surrogate_optuna_best.yaml
   search_space:
-    surrogate_lr: [1e-5, 3e-3, log]
     surrogate_weight_decay: [1e-8, 1e-3, log]
     surrogate_batch_size: [16, 32, 64]
     surrogate_hid_node: [64, 128, 256, 512]
     surrogate_hid_layer: [1, 2, 3]
-    disc_conv_channels: [4, 8, 16,32]
-    disc_conv2_channels: [4, 8, 16]
-    disc_conv2_stride: [2, 3, 4]
+    surrogate_conv1_channels: [4, 8, 16, 32]
+    surrogate_conv1_kernel: [3, 5, 7, 9, 11, 15]
+    surrogate_conv2_channels: [4, 8, 16]
+    surrogate_conv2_kernel: [3, 5, 7, 9, 11, 15]
+    surrogate_conv2_stride: [2, 3, 4]

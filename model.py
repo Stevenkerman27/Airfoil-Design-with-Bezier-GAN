@@ -206,11 +206,22 @@ class AerodynamicSurrogate(nn.Module):
         self.hid_node = config['surrogate_hid_node']
         self.hid_layer = config['surrogate_hid_layer']
 
-        self.conv_channels = config['disc_conv_channels']
-        self.kernel_size = config['disc_conv_kernel']
-        self.conv2_kernel = config['disc_conv2_kernel']
-        self.conv2_channels = config['disc_conv2_channels']
-        self.conv2_stride = config['disc_conv2_stride']
+        self.conv_channels = config['surrogate_conv1_channels']
+        self.kernel_size = config['surrogate_conv1_kernel']
+        self.conv2_kernel = config['surrogate_conv2_kernel']
+        self.conv2_channels = config['surrogate_conv2_channels']
+        self.conv2_stride = config['surrogate_conv2_stride']
+
+        for name, kernel_size in (
+            ('surrogate_conv1_kernel', self.kernel_size),
+            ('surrogate_conv2_kernel', self.conv2_kernel),
+        ):
+            if not isinstance(kernel_size, int) or kernel_size <= 0 or kernel_size % 2 == 0:
+                raise ValueError(f'{name} must be a positive odd integer, got {kernel_size}')
+        if not isinstance(self.conv2_stride, int) or self.conv2_stride <= 0:
+            raise ValueError(
+                f'surrogate_conv2_stride must be a positive integer, got {self.conv2_stride}'
+            )
 
         self.conv1 = nn.Conv1d(
             in_channels=2,
@@ -226,7 +237,17 @@ class AerodynamicSurrogate(nn.Module):
             padding=self.conv2_kernel // 2,
         )
 
-        seq_len = (self.num_pts + 2 * (self.conv2_kernel // 2) - self.conv2_kernel) // self.conv2_stride + 1
+        conv1_len = self.num_pts + 2 * (self.kernel_size // 2) - self.kernel_size + 1
+        seq_len = (
+            (conv1_len + 2 * (self.conv2_kernel // 2) - self.conv2_kernel)
+            // self.conv2_stride
+            + 1
+        )
+        if seq_len <= 0:
+            raise ValueError(
+                'Surrogate convolution configuration produces a non-positive sequence length: '
+                f'{seq_len}'
+            )
         in_dim = (self.conv2_channels * seq_len) + self.cond_dim
 
         act_fun = nn.LeakyReLU(0.2)
