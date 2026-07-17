@@ -6,17 +6,16 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from model import AerodynamicSurrogate
-from surrogate_split import resolve_surrogate_dataset_config
+from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
 from train_surrogate import (
     AirfoilSurrogateDataset,
     build_weighted_mse_loss,
     compute_global_gradient_norm,
     load_config,
     resolve_device,
-    split_dataset,
 )
 
 
@@ -173,14 +172,14 @@ def run_lr_range_test(config_path):
     config = load_config(config_path)
     validate_lr_range_config(config)
     device = resolve_device(config)
-    dataset_name, dataset_config = resolve_surrogate_dataset_config(config)
-    dataset = AirfoilSurrogateDataset(
-        dataset_config['data_path'],
-        dataset_config['norm_path'],
-        config,
-        save_norm=False,
+    dataset_config = resolve_surrogate_dataset_config(config)
+    raw_data = torch.load(dataset_config['data_path'], weights_only=True)
+    manifest = load_cross_validation_manifest(raw_data, config)
+    dataset, _ = AirfoilSurrogateDataset.from_training_indices(
+        raw_data,
+        manifest['development_indices'],
     )
-    train_set, _, _ = split_dataset(dataset, config)
+    train_set = Subset(dataset, manifest['development_indices'])
     train_loader = DataLoader(
         train_set,
         batch_size=config['surrogate_batch_size'],
@@ -206,12 +205,12 @@ def run_lr_range_test(config_path):
         })
     plot_lr_range(records_by_run, LR_RANGE_PLOT_PATH)
     result = {
-        'dataset_name': dataset_name,
+        'dataset_name': 'airfoil_group_development',
         'scheduled_steps': total_steps,
         'runs': results,
         'plot_path': LR_RANGE_PLOT_PATH,
     }
-    print(f"LR range test dataset: {dataset_name}")
+    print('LR range test dataset: airfoil_group_development')
     for run_result in results:
         print(
             f"Run {run_result['run']}: steps={run_result['completed_steps']}/{total_steps}, "

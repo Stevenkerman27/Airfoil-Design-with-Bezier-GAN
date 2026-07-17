@@ -1,10 +1,12 @@
 import os
 import glob
+import os
+
 import torch
 import yaml
 import numpy as np
 import matplotlib.pyplot as plt
-from surrogate_split import build_split_manifest, resolve_surrogate_dataset_config
+from surrogate_split import build_cross_validation_manifest, resolve_surrogate_dataset_config
 
 def plot_label_statistics(data_list, output_path="model/label_statistics.png"):
     """
@@ -143,21 +145,26 @@ def prepare_dataset(processed_foil_dir, polars_dir, output_file, max_cd, config)
     
     print(f"正在保存至 {output_file} ...")
     torch.save(data_list, output_file)
-    for dataset_name, dataset_config in config['surrogate_datasets'].items():
-        if dataset_config['data_path'] != output_file:
-            raise ValueError(
-                f"surrogate_datasets.{dataset_name}.data_path must equal {output_file}, "
-                f"got {dataset_config['data_path']}"
-            )
-        manifest = build_split_manifest(
-            data_list,
-            config['surrogate_split_ratio'],
-            config['surrogate_seed'],
-            dataset_config['split_strategy'],
+    dataset_config = resolve_surrogate_dataset_config(config)
+    if dataset_config['data_path'] != output_file:
+        raise ValueError(
+            f"surrogate_dataset.data_path must equal {output_file}, "
+            f"got {dataset_config['data_path']}"
         )
-        split_path = dataset_config['split_path']
-        torch.save(manifest, split_path)
-        print(f"已保存 {dataset_name} 划分清单至 {split_path}")
+    manifest = build_cross_validation_manifest(
+        data_list,
+        config['surrogate_test_ratio'],
+        config['surrogate_cv_fold_count'],
+        config['surrogate_seed'],
+    )
+    split_path = dataset_config['split_path']
+    torch.save(manifest, split_path)
+    print(f"已保存代理模型五折划分清单至 {split_path}")
+    fold_sizes = [len(indices) for indices in manifest['fold_indices']]
+    print(
+        f"开发集样本数: {len(manifest['development_indices'])}, "
+        f"测试集样本数: {len(manifest['test_indices'])}, fold 样本数: {fold_sizes}"
+    )
     print("保存成功！可以使用 torch.load('{}') 进行读取。".format(output_file))
 
 if __name__ == '__main__':
@@ -174,7 +181,7 @@ if __name__ == '__main__':
     # 按照当前目录结构设置路径
     processed_dir = os.path.join("foildata", "processed_foil")
     polars_dir = os.path.join("foildata", "polars")
-    _, selected_dataset_config = resolve_surrogate_dataset_config(config)
+    selected_dataset_config = resolve_surrogate_dataset_config(config)
     out_file = selected_dataset_config['data_path']
 
     prepare_dataset(processed_dir, polars_dir, out_file, max_cd=max_cd, config=config)

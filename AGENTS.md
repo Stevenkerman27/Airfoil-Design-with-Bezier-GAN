@@ -3,7 +3,7 @@ Chinese character involved in this project, mind encoding!
 我需要你帮助我开发CWGAN-GP的翼型设计神经网络。神经网络中包含贝塞尔曲线层
 当前终端为powershell 5.1, 不支持 && 以及||操作符
 
-在开始较复杂的非只读任务前，向用户询问详细的技术细节。完成和用户的alignment后寻求用户同意，并在docs文件夹中写入/修改对应模块的.md定义文件。保持定义简洁
+在开始较复杂的非只读任务前，向用户询问详细的技术细节。完成和用户的alignment后寻求用户同意，并在定义文件夹中写入/修改对应模块的.md定义文件。保持定义简洁
 
 开发规则：
 1. DRY 原则 (Don't Repeat Yourself)

@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 from dataset import AirfoilDataset
 from model import AerodynamicSurrogate, Discriminator, Generator
 from plot_gan_metrics import METRIC_COLUMNS, plot_gan_metrics
-from surrogate_split import load_split_indices, resolve_surrogate_dataset_config
+from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
 
 
 SURROGATE_TARGET_ORDER = ['CM', 'CL', 'CD']
@@ -52,13 +52,18 @@ def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, d
 
 
 def load_frozen_surrogate(config, device):
-    _, dataset_config = resolve_surrogate_dataset_config(config)
+    dataset_config = resolve_surrogate_dataset_config(config)
     model = AerodynamicSurrogate(config).to(device)
     checkpoint = torch.load(
         dataset_config['best_model_path'],
         map_location=device,
         weights_only=True,
     )
+    if checkpoint['selection_policy'] != 'fixed_final_epoch':
+        raise ValueError(
+            f"Unexpected surrogate checkpoint selection policy: "
+            f"{checkpoint['selection_policy']}"
+        )
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
     for parameter in model.parameters():
@@ -67,10 +72,15 @@ def load_frozen_surrogate(config, device):
 
 
 def load_gan_auxiliary_stats(config, device):
-    _, dataset_config = resolve_surrogate_dataset_config(config)
+    dataset_config = resolve_surrogate_dataset_config(config)
     gan_cond_norm = torch.load('model/cond_norm.pt', map_location=device, weights_only=True)
     gan_coord_norm = torch.load('model/coord_norm.pt', map_location=device, weights_only=True)
     surrogate_norm = torch.load(dataset_config['norm_path'], map_location=device, weights_only=True)
+
+    if surrogate_norm['source_split'] != 'development':
+        raise ValueError(
+            f"Unexpected surrogate normalization source: {surrogate_norm['source_split']}"
+        )
 
     surrogate_condition_names = surrogate_norm['condition']['names']
     surrogate_target_names = surrogate_norm['target']['names']
@@ -207,11 +217,10 @@ def compute_generator_auxiliary_losses(fake_foils, norm_conds, surrogate, stats,
     return surrogate_loss, per_target_losses[0], per_target_losses[1]
 
 
-def save_checkpoint(generator, discriminator, epoch, path):
+def save_checkpoint(generator, discriminator, path):
     checkpoint = {
         'generator_state_dict': generator.state_dict(),
         'discriminator_state_dict': discriminator.state_dict(),
-        'epoch': epoch
     }
     torch.save(checkpoint, path)
     print(f"Checkpoint saved to {path}")
@@ -348,7 +357,7 @@ def run_lr_range_test(config, dataloader, device):
     return final_lr
 
 
-def train(resume_path=None):
+def train():
     with open("config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
@@ -364,16 +373,16 @@ def train(resume_path=None):
     print(f"Using device: {device}")
 
     batch_size = config['batch_size']
-    dataset_name, dataset_config = resolve_surrogate_dataset_config(config)
+    dataset_config = resolve_surrogate_dataset_config(config)
     raw_data = torch.load(dataset_config['data_path'], weights_only=True)
-    _, split_indices = load_split_indices(raw_data, config)
+    manifest = load_cross_validation_manifest(raw_data, config)
     dataset = AirfoilDataset(
         dataset_config['data_path'],
-        split_indices['train'],
+        manifest['development_indices'],
         'model/cond_norm.pt',
         'model/coord_norm.pt',
     )
-    print(f"Using GAN training split '{dataset_name}' with {len(dataset)} samples")
+    print(f"Using GAN development set with {len(dataset)} samples")
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
 
     epochs = config['epochs']
@@ -385,15 +394,6 @@ def train(resume_path=None):
     surrogate = None
     auxiliary_stats = None
 
-    start_epoch = 0
-    if resume_path:
-        print(f"Loading checkpoint from {resume_path}")
-        checkpoint = torch.load(resume_path, map_location=device, weights_only=True)
-        generator.load_state_dict(checkpoint['generator_state_dict'])
-        discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
-        print(f"Resuming from epoch {start_epoch}")
-
     lr = float(config['lr'])
     if lr <= 0.0:
         lr = run_lr_range_test(config, dataloader, device)
@@ -401,10 +401,10 @@ def train(resume_path=None):
     optimizer_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(0.0, 0.9), weight_decay=5e-5)
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(0.0, 0.9), weight_decay=5e-5)
 
-    init_metrics_csv(GAN_METRICS_PATH, append=resume_path is not None)
+    init_metrics_csv(GAN_METRICS_PATH, append=False)
 
     import time
-    for epoch in range(start_epoch, epochs):
+    for epoch in range(epochs):
         loss_weights = compute_generator_loss_weights(config, epoch)
         use_auxiliary_loss = loss_weights['surrogate'] > 0.0
         if use_auxiliary_loss and surrogate is None:
@@ -543,13 +543,12 @@ def train(resume_path=None):
                 f"[Critic Fake: {avg_fake_score:.4f}] [GP Norm: {avg_grad_norm:.4f}]"
             )
 
-    save_checkpoint(generator, discriminator, epochs - 1, "model/gan_final.pt")
+    save_checkpoint(generator, discriminator, "model/gan_final.pt")
     plot_gan_metrics(GAN_METRICS_PATH, GAN_LOSS_PLOT_PATH)
     print("Training finished and final model saved to model/gan_final.pt")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train CWGAN-GP for airfoil design")
-    parser.add_argument("--resume", "-r", type=str, help="Path to checkpoint (.pt)")
-    args = parser.parse_args()
-    train(resume_path=args.resume)
+    parser.parse_args()
+    train()

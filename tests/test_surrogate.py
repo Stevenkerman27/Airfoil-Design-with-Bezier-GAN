@@ -110,14 +110,8 @@ def test_training_metrics_csv_uses_defined_schema(tmp_path):
         'gradient_norm_mean': 0.5,
         'gradient_norm_max': 0.8,
     }
-    val_result = {
-        'loss': 0.2,
-        'mae': 0.02,
-        'per_target_mse': torch.tensor([0.21, 0.22, 0.23]),
-        'per_target_mae': torch.tensor([0.021, 0.022, 0.023]),
-    }
     optimizer = torch.optim.Adam(torch.nn.Linear(1, 1).parameters(), lr=1e-3)
-    metrics = build_epoch_metrics(2, train_result, val_result, optimizer)
+    metrics = build_epoch_metrics(2, train_result, optimizer)
     path = tmp_path / 'training_metrics.csv'
 
     initialize_training_metrics(path)
@@ -129,7 +123,7 @@ def test_training_metrics_csv_uses_defined_schema(tmp_path):
     assert tuple(rows[0]) == tuple(TRAINING_METRIC_FIELDS)
     assert len(rows) == 1
     assert rows[0]['epoch'] == '3'
-    assert float(rows[0]['val_cd_mse']) == pytest.approx(0.23)
+    assert float(rows[0]['train_cd_mse']) == pytest.approx(0.13)
     assert float(rows[0]['train_grad_norm_max']) == pytest.approx(0.8)
 
 

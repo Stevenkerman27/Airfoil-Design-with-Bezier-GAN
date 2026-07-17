@@ -11,7 +11,7 @@ import yaml
 
 from foildata.xfoil import run_xfoil_single
 from model import Generator
-from surrogate_split import load_split_indices, resolve_surrogate_dataset_config
+from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
 from utils import calculate_relative_thickness
 
 
@@ -33,10 +33,12 @@ def resolve_device(config):
 
 
 def load_eval_conditions(config, split_name, count):
-    _, dataset_config = resolve_surrogate_dataset_config(config)
+    dataset_config = resolve_surrogate_dataset_config(config)
     raw_data = torch.load(dataset_config['data_path'], map_location='cpu', weights_only=True)
-    _, split_indices = load_split_indices(raw_data, config)
-    indices = split_indices[split_name]
+    manifest = load_cross_validation_manifest(raw_data, config)
+    if split_name != 'test':
+        raise ValueError(f"GAN evaluation only supports the independent test split, got '{split_name}'")
+    indices = manifest['test_indices']
     if count > len(indices):
         raise ValueError(
             f'Requested {count} evaluation conditions from {split_name}, only {len(indices)} available'
@@ -206,7 +208,7 @@ def main():
     parser = argparse.ArgumentParser(description='Evaluate a 4D-condition CWGAN-GP model with XFoil')
     parser.add_argument('--model', default='model/gan_final.pt', help='GAN checkpoint path')
     parser.add_argument('--tag', default='GAN', help='Output tag')
-    parser.add_argument('--split', choices=['val', 'test'], default='test', help='Condition split')
+    parser.add_argument('--split', choices=['test'], default='test', help='Independent condition split')
     parser.add_argument('--n-cond', type=int, default=DEFAULT_N_COND, help='Number of held-out conditions')
     parser.add_argument('--k-samples', type=int, default=DEFAULT_K_SAMPLES, help='Generations per condition')
     parser.add_argument('--top-m', type=int, default=DEFAULT_TOP_M, help='Saved top generated airfoils')

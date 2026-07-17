@@ -1,45 +1,60 @@
 # CWGAN-GP 翼型设计定义
 
-## 数据与划分
+## 范围
 
-原始数据集为 `model/airfoil_dataset.pt`。每个样本保存展平坐标 `x`、条件 `y = [alpha, Re, CL, CM]`、阻力系数 `cd` 与 `foil_id`。
+`train.py` 训练条件 WGAN-GP，生成翼型坐标。条件固定为 `c = [alpha, Re, CL, CM]`；厚度不是条件或损失项。训练数据来自 `surrogate_dataset.data_path`，并严格使用五折清单的 `development_indices`。独立测试集不参与 GAN 参数更新或 GAN 归一化统计量。
 
-`surrogate_dataset_name` 选择随机样本或按翼型分组协议。GAN、气动代理都只使用所选清单的 `train` 索引；验证和测试索引不参与 GAN 参数更新或 GAN 归一化统计量计算。
+## 数据与归一化
 
-GAN 条件采用逐维 Z-score，坐标的 x、y 分量采用训练子集的 Min-Max 归一化，统计量写入 `model/cond_norm.pt` 与 `model/coord_norm.pt`。
+原始样本包含展平坐标 `x`、标签 `y = [alpha, Re, CL, CM]`、`cd` 和 `foil_id`。`AirfoilDataset` 仅以开发集计算并保存：
+
+- `model/cond_norm.pt`：四维条件的 Z-score 均值和标准差。
+- `model/coord_norm.pt`：坐标 x、y 分量的 Min-Max 范围。
+
+每次运行 `train.py` 都会覆盖这两个文件。生成器、训练辅助项和 `eval_cgan.py` 都从这两个固定路径读取统计量。
+
+冻结代理来自 `surrogate_dataset.best_model_path`，归一化文件来自 `surrogate_dataset.norm_path`。仅当 checkpoint 的 `selection_policy` 为 `fixed_final_epoch`，且代理归一化文件的 `source_split` 为 `development`、条件顺序为 `[alpha, Re]`、目标顺序为 `[CM, CL, CD]` 时，才可启用辅助损失。
 
 ## 网络
 
-- `Generator(z, c)`：输入高斯噪声和 4 维条件，经 MLP 输出有理 Bezier 控制点及正权重；首尾控制点固定为归一化尾缘，输出 100 个翼型坐标点。
-- `Discriminator(x, c)`：两层 Conv1d 提取坐标序列特征，与 4 维条件拼接后输出一个 WGAN critic 分数，不使用 sigmoid。
-- `AerodynamicSurrogate(x, [alpha, Re])`：冻结代理网络，输出 `[CM, CL, CD]`；其模型和归一化文件由选中数据集条目的 `best_model_path` 与 `norm_path` 指定。
+`Generator(z, c)`：将 `noise_dimension` 维高斯噪声和四维归一化条件拼接，经 `gen_hid_layer` 个 `Linear + LeakyReLU(0.2)` 块输出 `num_control_points` 个二维控制点和权重。权重经过 `softplus` 保证为正；首尾控制点固定为归一化尾缘。`BezierDecoderLayer` 用有理 Bezier 曲线采样 `num_output_points` 个二维坐标并展平输出。
 
-## 损失
+`Discriminator(x, c)`：将坐标重排为 `(batch, 2, point)`，依次通过两层带同尺寸 padding 的 `Conv1d + LeakyReLU(0.2)`，展平后拼接条件，经 `dis_hid_layer - 1` 个全连接隐藏块，输出一个不含 sigmoid 的 critic 分数。
 
-Critic 损失：
+## 损失与调度
 
-`L_D = -mean(D(x_real, c)) + mean(D(G(z,c), c)) + lambda_gp * GP`
+判别器每个 batch 更新一次：
 
-其中 `GP = mean((||grad_x_hat D(x_hat,c)||_2 - 1)^2)`，`x_hat` 是真实和生成坐标的随机线性插值。
+`L_D = -mean(D(x_real, c)) + mean(D(G(z, c), c)) + lambda_gp * GP`
 
-生成器对抗项：
+`GP = mean((||grad_x_hat D(x_hat, c)||_2 - 1)^2)`，其中 `x_hat` 是真实与生成坐标的随机插值。
 
-`L_adv = -mean(D(G(z,c), c))`
+生成器对抗项为 `L_adv = -mean(D(G(z, c), c))`。辅助项先把生成坐标从 GAN 归一化空间反归一化，再变换到代理归一化空间；条件仅取 `[alpha, Re]`。代理预测与目标的归一化 `[CM, CL]` 分别计算 batch MSE：
 
-辅助气动项先将生成坐标变换到代理归一化空间，分别计算归一化 MSE：
+`L_surr = mean([w_CM * MSE_CM, w_CL * MSE_CL])`
 
-`L_surr = mean(10 * MSE_CM + 1 * MSE_CL)`
+其中 `[w_CM, w_CL] = gan_surrogate_target_loss_weights`。总生成器损失为：
 
-权重由 `gan_surrogate_target_loss_weights: [10.0, 1.0]` 定义，顺序固定为 `[CM, CL]`。总生成器损失为：
+`L_G = a(epoch) * L_adv + s(epoch) * L_surr`
 
-`L_G = w_adv * L_adv + w_surr * L_surr`
+当 epoch 小于 `gan_aux_start_epoch` 时，`a = 1`、`s = 0`。之后的 `gan_aux_ramp_epochs` 内，进度为 `p = (epoch - start + 1) / ramp`，并取 `a = 1 + p * (gan_adv_loss_final_weight - 1)`、`s = p * gan_surrogate_loss_weight`；调度结束后 `p = 1`。
 
-`w_surr` 在 `gan_aux_start_epoch` 后按 `gan_aux_ramp_epochs` 线性增加。厚度不再是条件、辅助损失或优化目标。
+## 训练与产物
 
-## 评估
+每个训练 batch 都更新判别器；当 batch 索引满足 `i % n_critic == 0` 时更新生成器，因此每个 epoch 的第一个 batch 会更新生成器。两个优化器均为 `Adam(lr, betas=(0.0, 0.9), weight_decay=5e-5)`。DataLoader 使用 `shuffle=True` 和 `drop_last=True`。
 
-`eval_cgan.py --split val` 用验证条件评估 checkpoint；`--split test` 仅用于最终测试。两者都通过 XFoil 计算实际 `CM` 与 `CL`，并报告：
+训练不支持中断后恢复，每次从随机初始化开始，并覆盖：
 
-`weighted_error = 10 * abs(CM_pred - CM_target) + abs(CL_pred - CL_target)`
+- `model/gan_training_metrics.csv`：critic、生成器、辅助项、梯度范数和调度权重。
+- `model/gan_final.pt`：仅含 `generator_state_dict` 和 `discriminator_state_dict`。
+- `model/loss_curve.png`：训练指标图。
 
-Critic loss 仅用于训练诊断，不用于选择气动性能最佳的 checkpoint。
+GAN checkpoint 不保存数据集清单、归一化统计量或配置副本。加载旧 checkpoint 时，调用方必须自行保证当前固定归一化文件和网络配置与训练时一致。
+
+## 评估与生成
+
+`eval_cgan.py` 仅接受 `--split test`。它以 `surrogate_seed` 确定性地从独立测试集抽取条件，每个条件生成 `k_samples` 个翼型，调用 XFoil，并按：
+
+`weighted_error = w_CM * |CM_xfoil - CM_target| + w_CL * |CL_xfoil - CL_target|`
+
+评分。每个条件的热图值为该条件有效样本的平均绝对误差加 `eval_var_weight * 方差`。全局最小的 `top_m` 个有效结果写入 `foildata/gen`。`test_cgan.py` 则接受用户给出的 `[alpha, Re, CL, CM]`，同时报告 XFoil 与冻结代理的误差。

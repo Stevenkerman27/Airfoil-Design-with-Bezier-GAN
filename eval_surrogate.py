@@ -3,144 +3,91 @@ import os
 
 import torch
 import yaml
-from torch.utils.data import DataLoader
 
 from model import AerodynamicSurrogate
+from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
 from train_surrogate import (
     AirfoilSurrogateDataset,
     SURROGATE_TARGET_NAMES,
     build_weighted_mse_loss,
     evaluate,
     load_config,
+    make_loader,
     plot_prediction_scatter,
     resolve_device,
-    split_dataset,
 )
-from surrogate_split import resolve_surrogate_dataset_config
 
 
 EVAL_PLOT_PATHS = {
-    'train': {
-        'CL': 'model/surrogate_train_cl.png',
-        'CD': 'model/surrogate_train_cd.png',
-        'CM': 'model/surrogate_train_cm.png',
-    },
-    'val': {
-        'CL': 'model/surrogate_eval_val_cl.png',
-        'CD': 'model/surrogate_eval_val_cd.png',
-        'CM': 'model/surrogate_eval_val_cm.png',
-    },
-    'test': {
-        'CL': 'model/surrogate_test_cl.png',
-        'CD': 'model/surrogate_test_cd.png',
-        'CM': 'model/surrogate_test_cm.png',
-    },
-    'all': {
-        'CL': 'model/surrogate_all_cl.png',
-        'CD': 'model/surrogate_all_cd.png',
-        'CM': 'model/surrogate_all_cm.png',
-    },
+    'CL': 'model/surrogate_test_cl.png',
+    'CD': 'model/surrogate_test_cd.png',
+    'CM': 'model/surrogate_test_cm.png',
 }
 
 
 def load_surrogate_checkpoint(model, checkpoint_path, device):
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    if checkpoint['selection_policy'] != 'fixed_final_epoch':
+        raise ValueError(
+            f"Unexpected surrogate checkpoint selection policy: {checkpoint['selection_policy']}"
+        )
     model.load_state_dict(checkpoint['model_state_dict'])
     return checkpoint
 
 
-def select_eval_dataset(dataset, config, split_name):
-    if split_name == 'all':
-        return dataset
-    train_set, val_set, test_set = split_dataset(dataset, config)
-    split_map = {
-        'train': train_set,
-        'val': val_set,
-        'test': test_set,
-    }
-    return split_map[split_name]
-
-
 def compute_target_metrics(predictions, targets, target_names):
     errors = predictions - targets
-    abs_errors = torch.abs(errors)
-    squared_errors = errors ** 2
-
-    per_target_mae = torch.mean(abs_errors, dim=0)
-    per_target_rmse = torch.sqrt(torch.mean(squared_errors, dim=0))
+    per_target_mae = torch.mean(torch.abs(errors), dim=0)
+    per_target_rmse = torch.sqrt(torch.mean(errors ** 2, dim=0))
     target_mean = torch.mean(targets, dim=0)
-    ss_res = torch.sum(squared_errors, dim=0)
+    ss_res = torch.sum(errors ** 2, dim=0)
     ss_tot = torch.sum((targets - target_mean) ** 2, dim=0)
     if torch.any(ss_tot <= 0):
         raise ValueError('R2 is undefined when a target has zero variance')
-    per_target_r2 = 1.0 - ss_res / ss_tot
-
-    metrics = {
+    return {
         'target_order': target_names,
-        'per_target_mae': {},
-        'per_target_rmse': {},
-        'per_target_r2': {},
+        'per_target_mae': {
+            name: float(per_target_mae[index].item()) for index, name in enumerate(target_names)
+        },
+        'per_target_rmse': {
+            name: float(per_target_rmse[index].item()) for index, name in enumerate(target_names)
+        },
+        'per_target_r2': {
+            name: float((1.0 - ss_res[index] / ss_tot[index]).item())
+            for index, name in enumerate(target_names)
+        },
     }
-    for index, name in enumerate(target_names):
-        metrics['per_target_mae'][name] = float(per_target_mae[index].item())
-        metrics['per_target_rmse'][name] = float(per_target_rmse[index].item())
-        metrics['per_target_r2'][name] = float(per_target_r2[index].item())
-    return metrics
 
 
 def save_metrics(path, metrics):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        yaml.safe_dump(metrics, f, allow_unicode=True, sort_keys=False)
+    with open(path, 'w', encoding='utf-8') as file:
+        yaml.safe_dump(metrics, file, allow_unicode=True, sort_keys=False)
 
 
-def run_evaluation(config_path, split_name, model_path=None, metrics_path=None):
+def run_evaluation(config_path, model_path=None, metrics_path=None):
     config = load_config(config_path)
     device = resolve_device(config)
-    dataset_name, dataset_config = resolve_surrogate_dataset_config(config)
-    checkpoint_path = model_path
-    if checkpoint_path is None:
-        checkpoint_path = dataset_config['best_model_path']
-
-    dataset = AirfoilSurrogateDataset(
-        dataset_config['data_path'],
-        dataset_config['norm_path'],
-        config,
-        save_norm=False,
-    )
-    eval_set = select_eval_dataset(dataset, config, split_name)
-    dataloader = DataLoader(
-        eval_set,
-        batch_size=config['surrogate_batch_size'],
-        shuffle=False,
-        drop_last=False,
-    )
-
+    dataset_config = resolve_surrogate_dataset_config(config)
+    raw_data = torch.load(dataset_config['data_path'], weights_only=True)
+    manifest = load_cross_validation_manifest(raw_data, config)
+    dataset = AirfoilSurrogateDataset.from_norm_path(raw_data, dataset_config['norm_path'])
+    dataloader = make_loader(dataset, manifest['test_indices'], config, shuffle=False)
+    checkpoint_path = model_path if model_path is not None else dataset_config['best_model_path']
     model = AerodynamicSurrogate(config).to(device)
     checkpoint = load_surrogate_checkpoint(model, checkpoint_path, device)
-    criterion = build_weighted_mse_loss(config, device)
-    result = evaluate(model, dataloader, criterion, dataset, device)
-
+    result = evaluate(model, dataloader, build_weighted_mse_loss(config, device), dataset, device)
     metrics = {
-        'split': split_name,
-        'dataset_name': dataset_name,
-        'sample_count': len(eval_set),
+        'split': 'test',
+        'sample_count': len(manifest['test_indices']),
         'model_path': checkpoint_path,
-        'checkpoint_epoch': int(checkpoint['epoch']),
-        'checkpoint_val_loss': float(checkpoint['val_loss']),
+        'training_epoch_count': int(checkpoint['training_epoch_count']),
+        'selection_policy': checkpoint['selection_policy'],
         'eval_loss': float(result['loss']),
         'eval_mae': float(result['mae']),
     }
-    metrics.update(
-        compute_target_metrics(
-            result['predictions'],
-            result['targets'],
-            SURROGATE_TARGET_NAMES,
-        )
-    )
-
-    plot_paths = EVAL_PLOT_PATHS[split_name]
-    for target_name, path in plot_paths.items():
+    metrics.update(compute_target_metrics(result['predictions'], result['targets'], SURROGATE_TARGET_NAMES))
+    for target_name, path in EVAL_PLOT_PATHS.items():
         plot_prediction_scatter(
             result['targets'],
             result['predictions'],
@@ -148,36 +95,24 @@ def run_evaluation(config_path, split_name, model_path=None, metrics_path=None):
             target_name,
             path,
         )
-
-    output_metrics_path = metrics_path
-    if output_metrics_path is None:
-        output_metrics_path = f"model/surrogate_{dataset_name}_eval_{split_name}_metrics.yaml"
-    save_metrics(output_metrics_path, metrics)
-
-    print(f"Evaluated split: {split_name}")
-    print(f"Sample count: {len(eval_set)}")
-    print(f"Evaluation loss: {result['loss']:.6f}")
-    print(f"Evaluation MAE: {result['mae']:.6f}")
+    output_path = metrics_path or 'model/surrogate_test_metrics.yaml'
+    save_metrics(output_path, metrics)
+    print(f"Independent test sample count: {metrics['sample_count']}")
+    print(f"Independent test loss: {metrics['eval_loss']:.6f}")
     for target_name in SURROGATE_TARGET_NAMES:
-        mae = metrics['per_target_mae'][target_name]
-        rmse = metrics['per_target_rmse'][target_name]
-        r2 = metrics['per_target_r2'][target_name]
-        print(f"{target_name} MAE: {mae:.6f}, RMSE: {rmse:.6f}, R2: {r2:.6f}")
-    print(f"Saved metrics to {output_metrics_path}")
+        print(
+            f"{target_name} MAE: {metrics['per_target_mae'][target_name]:.6f}, "
+            f"RMSE: {metrics['per_target_rmse'][target_name]:.6f}, "
+            f"R2: {metrics['per_target_r2'][target_name]:.6f}"
+        )
+    print(f'Saved metrics to {output_path}')
     return metrics
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Evaluate trained aerodynamic surrogate model')
+    parser = argparse.ArgumentParser(description='Evaluate final surrogate on its independent test set')
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to config yaml')
-    parser.add_argument(
-        '--split',
-        type=str,
-        default='test',
-        choices=['train', 'val', 'test', 'all'],
-        help='Dataset split to evaluate',
-    )
     parser.add_argument('--model', type=str, help='Override surrogate checkpoint path')
     parser.add_argument('--metrics', type=str, help='Override metrics yaml output path')
     args = parser.parse_args()
-    run_evaluation(args.config, args.split, model_path=args.model, metrics_path=args.metrics)
+    run_evaluation(args.config, model_path=args.model, metrics_path=args.metrics)

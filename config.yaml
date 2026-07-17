@@ -64,6 +64,9 @@ batch_size: 32
 device: cuda  # 设置计算设备: auto (自动选择), cuda, 或 cpu
 max_workers: 16
 max_Cd: 0.05
+dataset_aerodynamic_coefficient_plot:
+  alpha_values: [0.0, 4.0, 8.0]
+  re_values: [100000.0, 300000.0, 600000.0]
 plot_interval: 2
 cl_noise_std: 0.1  # 升力系数生成时的随机噪声标准差
 eval_var_weight: 0.05  # 评估时不准确度计算中方差项的权重系数
@@ -76,10 +79,11 @@ surrogate_conv1_kernel: 7
 surrogate_conv2_channels: 16
 surrogate_conv2_kernel: 7
 surrogate_conv2_stride: 4
-surrogate_epochs: 96
 surrogate_batch_size: 32
-surrogate_split_ratio: [0.8, 0.1, 0.1]
 surrogate_seed: 20260704
+surrogate_test_ratio: 0.1
+surrogate_cv_fold_count: 5
+surrogate_cv_epochs: 48
 surrogate_weight_decay: 6e-7
 surrogate_target_loss_weights: [1.0, 1.0, 6.0]  # 顺序为 [CM, CL, CD]
 surrogate_clr_mode: triangular2
@@ -92,27 +96,16 @@ surrogate_lr_range_epochs: 1
 surrogate_lr_range_runs: 5
 surrogate_lr_range_ema_beta: 0.98
 surrogate_lr_range_max_loss_multiplier: 4.0
-surrogate_dataset_name: airfoil_group
-surrogate_datasets:
-  random_sample:
-    data_path: model/airfoil_dataset.pt
-    split_path: model/surrogate_random_sample_split.pt
-    split_strategy: random_sample
-    norm_path: model/surrogate_norm.pt
-    best_model_path: model/surrogate_best.pt
-  airfoil_group:
-    data_path: model/airfoil_dataset.pt
-    split_path: model/surrogate_airfoil_group_split.pt
-    split_strategy: airfoil_group
-    norm_path: model/surrogate_airfoil_group_norm.pt
-    best_model_path: model/surrogate_airfoil_group_best.pt
+surrogate_dataset:
+  data_path: model/airfoil_dataset.pt
+  split_path: model/surrogate_airfoil_group_cv_split.pt
+  norm_path: model/surrogate_airfoil_group_norm.pt
+  best_model_path: model/surrogate_airfoil_group_best.pt
 optuna:
   study_name: surrogate_hpo
-  n_trials: 50
-  trial_epochs: 100
+  n_trials: 30
   direction: minimize
-  pruner: median
-  warmup_epochs: 25
+  pruner: none
   best_params_path: model/surrogate_optuna_best.yaml
   search_space:
     surrogate_weight_decay: [1e-8, 1e-3, log]
