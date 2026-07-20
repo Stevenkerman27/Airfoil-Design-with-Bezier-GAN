@@ -1,0 +1,87 @@
+format: cst_encode_report_v2
+airfoil_count: 1591
+cst:
+  shape_coefficient_count: 10
+  n1_range:
+  - 0.25
+  - 1.0
+  n2_range:
+  - 0.5
+  - 2.0
+metrics:
+  mae_y:
+    mean: 0.00019636905926745385
+    median: 0.00017324353393632919
+    p95: 0.0004047760448884219
+    max: 0.0009562554769217968
+  mse_y:
+    mean: 1.7655001727234776e-07
+    median: 8.611201707253713e-08
+    p95: 6.599332778023381e-07
+    max: 3.2457755878567696e-06
+  max_point_error:
+    mean: 0.002005266258493066
+    median: 0.0017673945985734463
+    p95: 0.004519200883805752
+    max: 0.014728991314768791
+worst_airfoils:
+- rank: 1
+  name: goe481.dat
+  mae_y: 0.0009562554769217968
+  mse_y: 2.9754025945294416e-06
+  max_point_error: 0.007566317915916443
+  comparison_plot_path: model\cst_encode_worst10\01_goe481_comparison.png
+- rank: 2
+  name: usa98.dat
+  mae_y: 0.0006929420051164925
+  mse_y: 1.365500793326646e-06
+  max_point_error: 0.00506119430065155
+  comparison_plot_path: model\cst_encode_worst10\02_usa98_comparison.png
+- rank: 3
+  name: dga1182.dat
+  mae_y: 0.0006790300831198692
+  mse_y: 1.0764767921500606e-06
+  max_point_error: 0.004901723936200142
+  comparison_plot_path: model\cst_encode_worst10\03_dga1182_comparison.png
+- rank: 4
+  name: s9104.dat
+  mae_y: 0.0006408765912055969
+  mse_y: 1.1703677955665626e-06
+  max_point_error: 0.007484627887606621
+  comparison_plot_path: model\cst_encode_worst10\04_s9104_comparison.png
+- rank: 5
+  name: l1003.dat
+  mae_y: 0.0006403614534065127
+  mse_y: 1.3388440720518702e-06
+  max_point_error: 0.00542413629591465
+  comparison_plot_path: model\cst_encode_worst10\05_l1003_comparison.png
+- rank: 6
+  name: raf69.dat
+  mae_y: 0.0006393949734047055
+  mse_y: 1.0132798706763424e-06
+  max_point_error: 0.003539741039276123
+  comparison_plot_path: model\cst_encode_worst10\06_raf69_comparison.png
+- rank: 7
+  name: e1212mod.dat
+  mae_y: 0.0006251396262086928
+  mse_y: 3.2457755878567696e-06
+  max_point_error: 0.014728991314768791
+  comparison_plot_path: model\cst_encode_worst10\07_e1212mod_comparison.png
+- rank: 8
+  name: saratov.dat
+  mae_y: 0.0005918196984566748
+  mse_y: 1.0201378017882234e-06
+  max_point_error: 0.005564801394939423
+  comparison_plot_path: model\cst_encode_worst10\08_saratov_comparison.png
+- rank: 9
+  name: goe244.dat
+  mae_y: 0.0005788992857560515
+  mse_y: 1.1531266181918909e-06
+  max_point_error: 0.005632482003420591
+  comparison_plot_path: model\cst_encode_worst10\09_goe244_comparison.png
+- rank: 10
+  name: eiffel371.dat
+  mae_y: 0.0005674620042555034
+  mse_y: 8.525453836227825e-07
+  max_point_error: 0.003820447251200676
+  comparison_plot_path: model\cst_encode_worst10\10_eiffel371_comparison.png

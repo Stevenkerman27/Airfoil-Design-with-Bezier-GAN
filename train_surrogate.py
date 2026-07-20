@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import yaml
-from torch.utils.data import DataLoader, Dataset, Subset
 
 from model import AerodynamicSurrogate
 from surrogate_split import (
@@ -31,6 +30,7 @@ CLR_CONFIG_KEYS = (
     'surrogate_clr_max_lr',
     'surrogate_clr_step_size_epochs',
 )
+SURROGATE_GRADIENT_NORM_INTERVAL_KEY = 'surrogate_gradient_norm_interval'
 CLR_MODE = 'triangular2'
 TRAINING_METRIC_FIELDS = (
     ['epoch', 'train_loss', 'train_mae']
@@ -54,20 +54,21 @@ class WeightedMSELoss(torch.nn.Module):
         return torch.mean((predictions - targets) ** 2 * self.weights)
 
 
-class AirfoilSurrogateDataset(Dataset):
-    def __init__(self, raw_data, norm_state):
+class AirfoilSurrogateDataset:
+    def __init__(self, raw_data, norm_state, device):
         if not raw_data:
             raise ValueError('Dataset is empty')
+        self.device = device
         self.label_names = DATASET_LABEL_NAMES
         self.cd_key = DATASET_CD_KEY
         self.condition_names = SURROGATE_CONDITION_NAMES
         self.target_names = SURROGATE_TARGET_NAMES
         self.condition_indices = [self.label_names.index(name) for name in self.condition_names]
         self.load_norm_state(norm_state)
-        self.samples = [self.normalize_item(item) for item in raw_data]
+        self.coords, self.conditions, self.targets = self.build_normalized_tensors(raw_data)
 
     @classmethod
-    def from_training_indices(cls, raw_data, training_indices):
+    def from_training_indices(cls, raw_data, training_indices, device):
         if not training_indices:
             raise ValueError('Normalization training indices are empty')
         template = cls.__new__(cls)
@@ -77,16 +78,16 @@ class AirfoilSurrogateDataset(Dataset):
         template.target_names = SURROGATE_TARGET_NAMES
         template.condition_indices = [template.label_names.index(name) for name in template.condition_names]
         norm_state = template.build_norm_state(raw_data, training_indices)
-        return cls(raw_data, norm_state), norm_state
+        return cls(raw_data, norm_state, device), norm_state
 
     @classmethod
-    def from_norm_path(cls, raw_data, norm_path):
+    def from_norm_path(cls, raw_data, norm_path, device):
         norm_state = torch.load(norm_path, weights_only=True)
         if norm_state['source_split'] != 'development':
             raise ValueError(
                 f"Unexpected surrogate normalization source: {norm_state['source_split']}"
             )
-        return cls(raw_data, norm_state)
+        return cls(raw_data, norm_state, device)
 
     def load_norm_state(self, norm_state):
         required_sections = ('coord', 'condition', 'target')
@@ -99,14 +100,14 @@ class AirfoilSurrogateDataset(Dataset):
             )
         if norm_state['target']['names'] != self.target_names:
             raise ValueError(f"Unexpected target names: {norm_state['target']['names']}")
-        self.x_min = norm_state['coord']['x_min'].float()
-        self.x_max = norm_state['coord']['x_max'].float()
-        self.y_min = norm_state['coord']['y_min'].float()
-        self.y_max = norm_state['coord']['y_max'].float()
-        self.condition_mean = norm_state['condition']['mean'].float()
-        self.condition_std = norm_state['condition']['std'].float()
-        self.target_mean = norm_state['target']['mean'].float()
-        self.target_std = norm_state['target']['std'].float()
+        self.x_min = norm_state['coord']['x_min'].float().to(self.device)
+        self.x_max = norm_state['coord']['x_max'].float().to(self.device)
+        self.y_min = norm_state['coord']['y_min'].float().to(self.device)
+        self.y_max = norm_state['coord']['y_max'].float().to(self.device)
+        self.condition_mean = norm_state['condition']['mean'].float().to(self.device)
+        self.condition_std = norm_state['condition']['std'].float().to(self.device)
+        self.target_mean = norm_state['target']['mean'].float().to(self.device)
+        self.target_std = norm_state['target']['std'].float().to(self.device)
 
     def build_norm_state(self, raw_data, training_indices):
         train_items = [raw_data[index] for index in training_indices]
@@ -132,20 +133,57 @@ class AirfoilSurrogateDataset(Dataset):
             },
         }
 
-    def normalize_item(self, item):
-        coords = item['x'].float().clone().view(-1, 2)
-        coords[:, 0] = (coords[:, 0] - self.x_min) / (self.x_max - self.x_min + 1e-8)
-        coords[:, 1] = (coords[:, 1] - self.y_min) / (self.y_max - self.y_min + 1e-8)
-        condition = (self.extract_conditions(item) - self.condition_mean) / self.condition_std
-        target = (self.extract_targets(item) - self.target_mean) / self.target_std
-        return {'coords': coords.view(-1), 'conditions': condition, 'targets': target}
+    def build_normalized_tensors(self, raw_data):
+        coords = torch.stack([item['x'] for item in raw_data]).float().view(len(raw_data), -1, 2)
+        labels = torch.stack([item['y'] for item in raw_data]).float()
+        drag_coefficients = torch.tensor(
+            [item[self.cd_key] for item in raw_data], dtype=torch.float32
+        )
+        coords = coords.to(self.device)
+        labels = labels.to(self.device)
+        drag_coefficients = drag_coefficients.to(self.device)
+        coords[:, :, 0] = (coords[:, :, 0] - self.x_min) / (self.x_max - self.x_min + 1e-8)
+        coords[:, :, 1] = (coords[:, :, 1] - self.y_min) / (self.y_max - self.y_min + 1e-8)
+        conditions = (labels[:, self.condition_indices] - self.condition_mean) / self.condition_std
+        target_columns = []
+        for name in self.target_names:
+            if name == 'CD':
+                target_columns.append(drag_coefficients)
+            else:
+                target_columns.append(labels[:, self.label_names.index(name)])
+        targets = (torch.stack(target_columns, dim=1) - self.target_mean) / self.target_std
+        return coords.view(len(raw_data), -1), conditions, targets
 
     def __len__(self):
-        return len(self.samples)
+        return self.coords.size(0)
 
-    def __getitem__(self, index):
-        sample = self.samples[index]
-        return sample['coords'], sample['conditions'], sample['targets']
+    def prepare_indices(self, indices):
+        prepared = torch.as_tensor(indices, dtype=torch.long, device=self.device)
+        if prepared.ndim != 1 or prepared.numel() == 0:
+            raise ValueError('Surrogate batch indices must be a non-empty one-dimensional sequence')
+        if torch.any(prepared < 0) or torch.any(prepared >= len(self)):
+            raise ValueError('Surrogate batch indices contain an out-of-range value')
+        return prepared
+
+    def batch_count(self, indices, batch_size):
+        if not isinstance(batch_size, int) or batch_size <= 0:
+            raise ValueError('surrogate_batch_size must be a positive integer')
+        return (indices.numel() + batch_size - 1) // batch_size
+
+    def iter_batches(self, indices, batch_size, shuffle):
+        if indices.device != self.coords.device:
+            raise ValueError('Surrogate batch indices must reside on the dataset device')
+        if indices.dtype != torch.long:
+            raise ValueError('Surrogate batch indices must use torch.long dtype')
+        if shuffle:
+            indices = indices[torch.randperm(indices.numel(), device=self.coords.device)]
+        for start in range(0, indices.numel(), batch_size):
+            batch_indices = indices[start:start + batch_size]
+            yield (
+                self.coords[batch_indices],
+                self.conditions[batch_indices],
+                self.targets[batch_indices],
+            )
 
     def extract_conditions(self, item):
         return item['y'][self.condition_indices].float()
@@ -157,7 +195,7 @@ class AirfoilSurrogateDataset(Dataset):
         return torch.tensor(values, dtype=torch.float32)
 
     def denormalize_targets(self, values):
-        return values * self.target_std.to(values.device) + self.target_mean.to(values.device)
+        return values * self.target_std + self.target_mean
 
 
 def load_config(config_path):
@@ -205,27 +243,16 @@ def save_normalization_state(norm_state, config, training_indices):
     return norm_path
 
 
-def make_loader(dataset, indices, config, shuffle):
-    if not indices:
-        raise ValueError('DataLoader indices are empty')
-    return DataLoader(
-        Subset(dataset, indices),
-        batch_size=config['surrogate_batch_size'],
-        shuffle=shuffle,
-        drop_last=False,
-    )
-
-
 def set_training_seed(seed):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
 
-def evaluate(model, dataloader, criterion, dataset, device):
+def evaluate(model, dataset, indices, criterion, batch_size, device):
     model.eval()
-    total_loss = 0.0
-    total_mae = 0.0
+    total_loss = torch.zeros((), device=device)
+    total_mae = torch.zeros((), device=device)
     batch_count = 0
     sample_count = 0
     target_squared_error_sum = torch.zeros(len(SURROGATE_TARGET_NAMES), device=device)
@@ -233,77 +260,101 @@ def evaluate(model, dataloader, criterion, dataset, device):
     predictions = []
     targets = []
     with torch.no_grad():
-        for coords, conditions, target in dataloader:
-            coords, conditions, target = coords.to(device), conditions.to(device), target.to(device)
+        for coords, conditions, target in dataset.iter_batches(indices, batch_size, shuffle=False):
             prediction = model(coords, conditions)
             loss = criterion(prediction, target)
             prediction_real = dataset.denormalize_targets(prediction)
             target_real = dataset.denormalize_targets(target)
-            total_loss += loss.item()
-            total_mae += torch.mean(torch.abs(prediction_real - target_real)).item()
+            total_loss += loss
+            total_mae += torch.mean(torch.abs(prediction_real - target_real))
             batch_count += 1
             sample_count += target.size(0)
             target_squared_error_sum += torch.sum((prediction - target) ** 2, dim=0)
             target_absolute_error_sum += torch.sum(torch.abs(prediction_real - target_real), dim=0)
-            predictions.append(prediction_real.cpu())
-            targets.append(target_real.cpu())
+            predictions.append(prediction_real)
+            targets.append(target_real)
     if batch_count == 0:
-        raise ValueError('Evaluation dataloader produced zero batches')
+        raise ValueError('Evaluation batch iterator produced zero batches')
     return {
-        'loss': total_loss / batch_count,
-        'mae': total_mae / batch_count,
+        'loss': (total_loss / batch_count).item(),
+        'mae': (total_mae / batch_count).item(),
         'per_target_mse': target_squared_error_sum.div(sample_count).cpu(),
         'per_target_mae': target_absolute_error_sum.div(sample_count).cpu(),
-        'predictions': torch.cat(predictions, dim=0),
-        'targets': torch.cat(targets, dim=0),
+        'predictions': torch.cat(predictions, dim=0).cpu(),
+        'targets': torch.cat(targets, dim=0).cpu(),
     }
 
 
 def compute_global_gradient_norm(parameters):
-    squared_norm = sum(
-        torch.sum(parameter.grad.detach() ** 2).item()
+    squared_norms = [
+        torch.sum(parameter.grad.detach() ** 2)
         for parameter in parameters
         if parameter.grad is not None
-    )
-    return squared_norm ** 0.5
+    ]
+    if not squared_norms:
+        raise ValueError('Cannot compute gradient norm because no parameter has a gradient')
+    return torch.sqrt(torch.stack(squared_norms).sum())
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, lr_scheduler, dataset, device):
+def train_one_epoch(
+    model,
+    dataset,
+    indices,
+    criterion,
+    optimizer,
+    lr_scheduler,
+    device,
+    config,
+):
     model.train()
-    total_loss = 0.0
-    total_mae = 0.0
+    if SURROGATE_GRADIENT_NORM_INTERVAL_KEY not in config:
+        raise ValueError(
+            f'Missing {SURROGATE_GRADIENT_NORM_INTERVAL_KEY} in surrogate training configuration'
+        )
+    gradient_norm_interval = config[SURROGATE_GRADIENT_NORM_INTERVAL_KEY]
+    if not isinstance(gradient_norm_interval, int) or gradient_norm_interval <= 0:
+        raise ValueError(f'{SURROGATE_GRADIENT_NORM_INTERVAL_KEY} must be a positive integer')
+    total_loss = torch.zeros((), device=device)
+    total_mae = torch.zeros((), device=device)
     batch_count = 0
     sample_count = 0
     target_squared_error_sum = torch.zeros(len(SURROGATE_TARGET_NAMES), device=device)
     target_absolute_error_sum = torch.zeros(len(SURROGATE_TARGET_NAMES), device=device)
-    gradient_norms = []
-    for coords, conditions, target in dataloader:
-        coords, conditions, target = coords.to(device), conditions.to(device), target.to(device)
+    gradient_norm_sum = torch.zeros((), device=device)
+    gradient_norm_max = torch.zeros((), device=device)
+    gradient_norm_sample_count = 0
+    for batch_index, (coords, conditions, target) in enumerate(
+        dataset.iter_batches(indices, config['surrogate_batch_size'], shuffle=True)
+    ):
         optimizer.zero_grad()
         prediction = model(coords, conditions)
         loss = criterion(prediction, target)
         loss.backward()
-        gradient_norms.append(compute_global_gradient_norm(model.parameters()))
+        if batch_index == 0 or (batch_index + 1) % gradient_norm_interval == 0:
+            gradient_norm = compute_global_gradient_norm(model.parameters())
+            gradient_norm_sum += gradient_norm
+            gradient_norm_max = torch.maximum(gradient_norm_max, gradient_norm)
+            gradient_norm_sample_count += 1
         optimizer.step()
         lr_scheduler.step()
         with torch.no_grad():
             prediction_real = dataset.denormalize_targets(prediction)
             target_real = dataset.denormalize_targets(target)
-            total_mae += torch.mean(torch.abs(prediction_real - target_real)).item()
-        total_loss += loss.item()
+            total_mae += torch.mean(torch.abs(prediction_real - target_real))
+        total_loss += loss.detach()
         batch_count += 1
         sample_count += target.size(0)
         target_squared_error_sum += torch.sum((prediction.detach() - target) ** 2, dim=0)
         target_absolute_error_sum += torch.sum(torch.abs(prediction_real - target_real), dim=0)
     if batch_count == 0:
-        raise ValueError('Training dataloader produced zero batches')
+        raise ValueError('Training batch iterator produced zero batches')
     return {
-        'loss': total_loss / batch_count,
-        'mae': total_mae / batch_count,
+        'loss': (total_loss / batch_count).item(),
+        'mae': (total_mae / batch_count).item(),
         'per_target_mse': target_squared_error_sum.div(sample_count).cpu(),
         'per_target_mae': target_absolute_error_sum.div(sample_count).cpu(),
-        'gradient_norm_mean': float(np.mean(gradient_norms)),
-        'gradient_norm_max': float(np.max(gradient_norms)),
+        'gradient_norm_mean': (gradient_norm_sum / gradient_norm_sample_count).item(),
+        'gradient_norm_max': gradient_norm_max.item(),
     }
 
 
@@ -413,8 +464,8 @@ def train_fixed_epochs(
     record_metrics_path=None,
 ):
     set_training_seed(training_seed)
-    train_loader = make_loader(dataset, train_indices, config, shuffle=True)
-    validation_loader = make_loader(dataset, validation_indices, config, shuffle=False)
+    train_indices = dataset.prepare_indices(train_indices)
+    validation_indices = dataset.prepare_indices(validation_indices)
     model = AerodynamicSurrogate(config).to(device)
     criterion = build_weighted_mse_loss(config, device)
     optimizer = torch.optim.Adam(
@@ -422,7 +473,9 @@ def train_fixed_epochs(
         lr=float(config['surrogate_clr_base_lr']),
         weight_decay=float(config['surrogate_weight_decay']),
     )
-    scheduler = build_surrogate_clr(config, optimizer, len(train_loader))
+    scheduler = build_surrogate_clr(
+        config, optimizer, dataset.batch_count(train_indices, config['surrogate_batch_size'])
+    )
     epochs = config['surrogate_cv_epochs']
     if record_metrics_path is not None:
         initialize_training_metrics(record_metrics_path)
@@ -430,7 +483,7 @@ def train_fixed_epochs(
     train_errors = []
     for epoch in range(epochs):
         train_result = train_one_epoch(
-            model, train_loader, criterion, optimizer, scheduler, dataset, device
+            model, dataset, train_indices, criterion, optimizer, scheduler, device, config
         )
         train_losses.append(train_result['loss'])
         train_errors.append(train_result['mae'])
@@ -441,7 +494,14 @@ def train_fixed_epochs(
                 f'[Epoch {epoch + 1}/{epochs}] [Train loss: {train_result["loss"]:.6f}] '
                 f'[Train MAE: {train_result["mae"]:.6f}]'
             )
-    validation_result = evaluate(model, validation_loader, criterion, dataset, device)
+    validation_result = evaluate(
+        model,
+        dataset,
+        validation_indices,
+        criterion,
+        config['surrogate_batch_size'],
+        device,
+    )
     return model, validation_result, train_losses, train_errors
 
 
@@ -451,7 +511,7 @@ def run_cross_validation(config, trial=None):
     fold_results = []
     for fold_index, validation_indices in enumerate(manifest['fold_indices']):
         training_indices = build_fold_training_indices(manifest, fold_index)
-        dataset, _ = AirfoilSurrogateDataset.from_training_indices(raw_data, training_indices)
+        dataset, _ = AirfoilSurrogateDataset.from_training_indices(raw_data, training_indices, device)
         model, validation_result, _, _ = train_fixed_epochs(
             config,
             dataset,
@@ -468,7 +528,7 @@ def run_cross_validation(config, trial=None):
                 import optuna
                 raise optuna.TrialPruned()
         print(f'Fold {fold_index + 1}/{len(manifest["fold_indices"])} final validation loss: {validation_result["loss"]:.6f}')
-        del model
+        del model, dataset
         if device.type == 'cuda':
             torch.cuda.empty_cache()
 
@@ -502,7 +562,9 @@ def train_final_surrogate(config):
     device = resolve_device(config)
     raw_data, manifest = load_raw_data_and_manifest(config)
     development_indices = manifest['development_indices']
-    dataset, norm_state = AirfoilSurrogateDataset.from_training_indices(raw_data, development_indices)
+    dataset, norm_state = AirfoilSurrogateDataset.from_training_indices(
+        raw_data, development_indices, device
+    )
     norm_path = save_normalization_state(norm_state, config, development_indices)
     model, _, train_losses, train_errors = train_fixed_epochs(
         config,

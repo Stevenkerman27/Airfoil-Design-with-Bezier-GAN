@@ -15,6 +15,7 @@ from dataset import AirfoilDataset
 from model import AerodynamicSurrogate, Discriminator, Generator
 from plot_gan_metrics import METRIC_COLUMNS, plot_gan_metrics
 from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
+from utils import normalize_airfoil_chord_coordinates
 
 
 SURROGATE_TARGET_ORDER = ['CM', 'CL', 'CD']
@@ -172,8 +173,9 @@ def denormalize_gan_coords(coords, coord_stats, num_points):
 
 
 def normalize_surrogate_coords(physical_coords, coord_stats):
-    x_values = (physical_coords[:, :, 0] - coord_stats['x_min']) / (coord_stats['x_max'] - coord_stats['x_min'] + 1e-8)
-    y_values = (physical_coords[:, :, 1] - coord_stats['y_min']) / (coord_stats['y_max'] - coord_stats['y_min'] + 1e-8)
+    chord_normalized_coords = normalize_airfoil_chord_coordinates(physical_coords)
+    x_values = (chord_normalized_coords[:, :, 0] - coord_stats['x_min']) / (coord_stats['x_max'] - coord_stats['x_min'] + 1e-8)
+    y_values = (chord_normalized_coords[:, :, 1] - coord_stats['y_min']) / (coord_stats['y_max'] - coord_stats['y_min'] + 1e-8)
     return torch.stack([x_values, y_values], dim=2).view(physical_coords.size(0), -1)
 
 

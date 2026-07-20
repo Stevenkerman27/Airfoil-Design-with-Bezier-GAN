@@ -1,43 +1,25 @@
-num_control_points: 10
 num_output_points: 100
 point_density_beta: 1.3
-bezier_encode:
-  curve_mode: split_surface
-  surface_control_points: 5
-  target_path: foildata/processed_foil/ag03.dat
-  coord_norm_path: model/coord_norm.pt
-  output_path: model/encoded_bezier.pt
-  plot_path: model/bezier_fit_result.png
+airfoil_preprocess:
+  max_relative_thickness: 0.22
+cst:
+  shape_coefficient_count: 10
+  n1_range: [0.25, 1.0]
+  n2_range: [0.5, 2.0]
+cst_encode:
+  data_dir: foildata/processed_foil
+  batch_size: 64
   lr: 0.005
   iterations: 700
   scheduler_patience: 500
   scheduler_factor: 0.5
   loss_scale: 100.0
-  weight_reg: 0.0007792224749560202
-  length_penalty: 0.005746261451125304
-  leading_edge_window: 18
-  leading_edge_weight_amplitude: 4.8
-  log_interval: 100
-  batch_size: 64
-bezier_encode_optuna:
-  study_name: bezier_encode_hpo
-  n_trials: 30
-  direction: minimize
-  pruner: none
-  warmup_epochs: 0
-  data_dir: foildata/processed_foil
-  max_airfoils:
+  coefficient_reg: 1.0e-6
   log_every_airfoils: 50
-  control_point_penalty_weight: 5.0e-4
-  best_params_path: model/bezier_encode_optuna_best.yaml
-  search_space:
-    bezier_encode.surface_control_points: [2, 9]
-    bezier_encode.lr: [1e-3, 5e-2, log]
-    bezier_encode.iterations: [250, 500]
-    bezier_encode.weight_reg: [1e-5, 1e-2, log]
-    bezier_encode.length_penalty: [1e-4, 1.0, log]
-    bezier_encode.leading_edge_window: [5, 20]
-    bezier_encode.leading_edge_weight_amplitude: [2.0, 8.0, linear]
+  encoded_path: model/cst_encoded_airfoils.pt
+  report_path: model/cst_encode_report.yaml
+  worst_case_dir: model/cst_encode_worst10
+  worst_case_count: 10
 noise_dimension: 6
 gen_hid_node: 128
 gen_hid_layer: 2
@@ -52,12 +34,12 @@ disc_conv2_channels: 16
 disc_conv2_stride: 2
 cond_dim: 4
 lr: 2e-4
-epochs: 150
+epochs: 120
 n_critic: 3
 lambda_gp: 10
 gan_aux_start_epoch: 40
 gan_aux_ramp_epochs: 20
-gan_adv_loss_final_weight: 0.2
+gan_adv_loss_final_weight: 0.5
 gan_surrogate_loss_weight: 25.0
 gan_surrogate_target_loss_weights: [10.0, 1.0]  # 顺序为 [CM, CL]
 batch_size: 32
@@ -73,18 +55,19 @@ eval_var_weight: 0.05  # 评估时不准确度计算中方差项的权重系数
 surrogate_cond_dim: 2
 surrogate_out_dim: 3
 surrogate_hid_node: 512
-surrogate_hid_layer: 3
-surrogate_conv1_channels: 32
-surrogate_conv1_kernel: 7
+surrogate_hid_layer: 2
+surrogate_conv1_channels: 16
+surrogate_conv1_kernel: 3
 surrogate_conv2_channels: 16
-surrogate_conv2_kernel: 7
-surrogate_conv2_stride: 4
+surrogate_conv2_kernel: 3
+surrogate_conv2_stride: 3
 surrogate_batch_size: 32
+surrogate_gradient_norm_interval: 100
 surrogate_seed: 20260704
 surrogate_test_ratio: 0.1
 surrogate_cv_fold_count: 5
-surrogate_cv_epochs: 48
-surrogate_weight_decay: 6e-7
+surrogate_cv_epochs: 60
+surrogate_weight_decay: 1e-6
 surrogate_target_loss_weights: [1.0, 1.0, 6.0]  # 顺序为 [CM, CL, CD]
 surrogate_clr_mode: triangular2
 surrogate_clr_base_lr: 2e-4
@@ -103,7 +86,7 @@ surrogate_dataset:
   best_model_path: model/surrogate_airfoil_group_best.pt
 optuna:
   study_name: surrogate_hpo
-  n_trials: 30
+  n_trials: 50
   direction: minimize
   pruner: none
   best_params_path: model/surrogate_optuna_best.yaml
@@ -111,9 +94,9 @@ optuna:
     surrogate_weight_decay: [1e-8, 1e-3, log]
     surrogate_batch_size: [16, 32, 64]
     surrogate_hid_node: [64, 128, 256, 512]
-    surrogate_hid_layer: [1, 2, 3]
-    surrogate_conv1_channels: [4, 8, 16, 32]
+    surrogate_hid_layer: [2, 3]
+    surrogate_conv1_channels: [8, 16, 32]
     surrogate_conv1_kernel: [3, 5, 7, 9, 11, 15]
-    surrogate_conv2_channels: [4, 8, 16]
+    surrogate_conv2_channels: [8, 16, 32]
     surrogate_conv2_kernel: [3, 5, 7, 9, 11, 15]
     surrogate_conv2_stride: [2, 3, 4]

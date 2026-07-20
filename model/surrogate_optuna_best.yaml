@@ -1,13 +1,12 @@
-best_value: 0.20522885559255194
+best_value: 0.22245739996433259
 best_params:
-  surrogate_lr: 0.0008175326568919498
-  surrogate_weight_decay: 6.004166623480766e-07
+  surrogate_weight_decay: 1.0860862715797385e-06
   surrogate_batch_size: 32
   surrogate_hid_node: 512
-  surrogate_hid_layer: 3
-  surrogate_conv1_channels: 32
-  surrogate_conv1_kernel: 7
+  surrogate_hid_layer: 2
+  surrogate_conv1_channels: 16
+  surrogate_conv1_kernel: 3
   surrogate_conv2_channels: 16
-  surrogate_conv2_kernel: 7
-  surrogate_conv2_stride: 4
-best_trial_number: 32
+  surrogate_conv2_kernel: 3
+  surrogate_conv2_stride: 3
+best_trial_number: 42

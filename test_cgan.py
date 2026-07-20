@@ -5,28 +5,65 @@ import argparse
 from model import Generator, Discriminator
 import numpy as np
 from train import (
+    GAN_LABEL_ORDER,
     build_surrogate_conditions,
     load_frozen_surrogate,
     load_gan_auxiliary_stats,
     normalize_surrogate_coords,
 )
+from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
 from utils import calculate_relative_thickness
 from foildata.xfoil import run_xfoil_single
 
-NUM_GENERATE = 10
+NUM_GENERATE = 5
 
-def generate_and_evaluate(model_path, tag, user_label_list):
+
+def sample_development_conditions(raw_data, development_indices, count, seed):
+    if not isinstance(count, int) or count <= 0:
+        raise ValueError(f'development sample count must be a positive integer, got {count}')
+    if count > len(development_indices):
+        raise ValueError(
+            f'Requested {count} development conditions, only '
+            f'{len(development_indices)} are available'
+        )
+
+    generator = torch.Generator().manual_seed(seed)
+    selected_positions = torch.randperm(
+        len(development_indices),
+        generator=generator,
+    )[:count].tolist()
+    selected_conditions = []
+    for position in selected_positions:
+        dataset_index = development_indices[position]
+        labels = raw_data[dataset_index]['y'].float()
+        if labels.ndim != 1 or labels.numel() != len(GAN_LABEL_ORDER):
+            raise ValueError(
+                f'Dataset sample {dataset_index} must contain labels in order '
+                f'{GAN_LABEL_ORDER}, got shape {tuple(labels.shape)}'
+            )
+        selected_conditions.append((dataset_index, labels.tolist()))
+    return selected_conditions
+
+
+def load_development_conditions(config, count):
+    dataset_config = resolve_surrogate_dataset_config(config)
+    raw_data = torch.load(dataset_config['data_path'], map_location='cpu', weights_only=True)
+    manifest = load_cross_validation_manifest(raw_data, config)
+    return sample_development_conditions(
+        raw_data,
+        manifest['development_indices'],
+        count,
+        config['surrogate_seed'],
+    )
+
+
+def generate_and_evaluate(model_path, tag, user_label_list, config):
     print(f"\n--- Generating for {tag} using {model_path} ---")
     print(f"User defined label: {user_label_list}")
 
     alpha_input = user_label_list[0]
     re_input = user_label_list[1]
     
-    # 读取配置
-    config_path = "config.yaml"
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f)
-        
     # 初始化设备
     device_cfg = config["device"]
     if device_cfg.lower() == "cuda" and torch.cuda.is_available():
@@ -48,13 +85,14 @@ def generate_and_evaluate(model_path, tag, user_label_list):
 
     print(f"Loading weights from {model_path}")
     checkpoint = torch.load(model_path, map_location=device, weights_only=True)
-    if isinstance(checkpoint, dict) and 'generator_state_dict' in checkpoint:
-        generator.load_state_dict(checkpoint['generator_state_dict'])
-        discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
-    else:
-        # Assume it's a generator state dict if not a combined checkpoint
-        generator.load_state_dict(checkpoint)
-        print("Warning: Only generator weights found or loaded.")
+    required_checkpoint_keys = {'generator_state_dict', 'discriminator_state_dict'}
+    if not isinstance(checkpoint, dict) or not required_checkpoint_keys.issubset(checkpoint):
+        raise ValueError(
+            f'Model {model_path} is not a complete GAN checkpoint; expected keys '
+            f'{sorted(required_checkpoint_keys)}'
+        )
+    generator.load_state_dict(checkpoint['generator_state_dict'])
+    discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
     
     generator.eval()
     discriminator.eval()
@@ -234,8 +272,32 @@ if __name__ == '__main__':
     parser.add_argument("--model", "-m", type=str, default="model/gan_final.pt", help="Path to model checkpoint")
     parser.add_argument("--tag", type=str, default="GAN", help="Tag prefix used in generated filenames")
     parser.add_argument("--labels", "-l", type=float, nargs=4, help="Labels: Alpha Re Cl Cm")
+    parser.add_argument(
+        '--development-samples',
+        type=int,
+        default=5,
+        help='Sample real development conditions without replacement; 0 uses --labels',
+    )
     args = parser.parse_args()
-    
-    custom_label = args.labels if args.labels else [2.0, 200000.0, 0.6, -0.08]
-    
-    generate_and_evaluate(args.model, args.tag, user_label_list=custom_label)
+
+    with open('config.yaml', 'r', encoding='utf-8') as file:
+        config = yaml.safe_load(file)
+
+    if args.development_samples < 0:
+        raise ValueError(
+            f'development sample count must be non-negative, got '
+            f'{args.development_samples}'
+        )
+    if args.development_samples > 0:
+        conditions = load_development_conditions(config, args.development_samples)
+        print(
+            f'Sampled {len(conditions)} development conditions with '
+            f"seed {config['surrogate_seed']}"
+        )
+        for sample_number, (dataset_index, labels) in enumerate(conditions, start=1):
+            condition_tag = f'{args.tag}_DEV{sample_number:03d}'
+            print(f'Development dataset index: {dataset_index}')
+            generate_and_evaluate(args.model, condition_tag, labels, config)
+    else:
+        custom_label = args.labels if args.labels else [2.0, 200000.0, 0.6, -0.2]
+        generate_and_evaluate(args.model, args.tag, custom_label, config)

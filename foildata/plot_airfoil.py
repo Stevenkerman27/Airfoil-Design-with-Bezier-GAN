@@ -1,42 +1,32 @@
 import tkinter as tk
-from tkinter import messagebox
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from tkinter import filedialog, messagebox
 import os
 import re
-
-# 尝试导入 windnd 用于拖拽支持
-try:
-    import windnd
-except ImportError:
-    print("Error: 'windnd' library not found. Please install it using: pip install windnd")
-    windnd = None
 
 class AirfoilPlotter:
     def __init__(self, root):
         self.root = root
-        self.root.title("翼型可视化工具 (拖入 .dat 文件)")
+        self.root.title("翼型可视化工具")
         self.root.geometry("1200x900")
 
-        # 初始化绘图区
-        self.fig, self.ax = plt.subplots(figsize=(8, 5))
-        self.ax.set_aspect('equal')
-        self.ax.grid(True, linestyle='--', alpha=0.6)
-        self.ax.set_xlabel("X/c")
-        self.ax.set_ylabel("Y/c")
-        
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
-        self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.open_button = tk.Button(
+            self.root,
+            text="打开 .dat 文件",
+            command=self.open_airfoil_file,
+            font=("Microsoft YaHei", 12),
+        )
+        self.open_button.pack(pady=(10, 0))
 
-        # 提示标签
-        self.label = tk.Label(self.root, text="请将 .dat 翼型文件拖入此窗口", font=("Microsoft YaHei", 12), pady=10)
+        self.canvas = tk.Canvas(self.root, background="white", highlightthickness=0)
+        self.canvas.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.canvas.bind("<Configure>", self.on_canvas_resize)
+
+        self.label = tk.Label(self.root, text="请选择 .dat 翼型文件", font=("Microsoft YaHei", 12), pady=10)
         self.label.pack()
+        self.coords = None
+        self.airfoil_name = None
+        self.filename = None
 
-        # 注册拖拽事件
-        if windnd:
-            windnd.hook_dropfiles(self.root, func=self.on_drop)
-        else:
-            messagebox.showwarning("依赖缺失", "未检测到 windnd 库，拖拽功能将不可用。\n请运行: pip install windnd")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
     def on_closing(self):
@@ -76,49 +66,79 @@ class AirfoilPlotter:
             print(f"解析错误: {e}")
             return None, name
 
-    def on_drop(self, files):
-        """处理文件拖入"""
-        for file_path in files:
-            # 转换字节流路径为字符串 (windnd 在某些版本返回 bytes)
-            if isinstance(file_path, bytes):
-                file_path = file_path.decode('gbk') # Windows 系统中文路径常用 GBK
-            
-            if not file_path.lower().endswith('.dat'):
-                continue
-                
-            coords, name = self.parse_selig(file_path)
-            
-            if coords:
-                self.draw_airfoil(coords, name, os.path.basename(file_path))
-            else:
-                messagebox.showerror("格式错误", f"无法解析文件: {os.path.basename(file_path)}\n请确保它是 Selig 格式的坐标文件。")
-            break # 每次只画第一个拖入的文件
+    def open_airfoil_file(self):
+        """选择并加载一个 Selig 格式翼型文件。"""
+        file_path = filedialog.askopenfilename(
+            title="选择翼型文件",
+            filetypes=[("Airfoil data", "*.dat"), ("All files", "*.*")],
+        )
+        if not file_path:
+            return
+
+        coords, name = self.parse_selig(file_path)
+        filename = os.path.basename(file_path)
+        if coords:
+            self.draw_airfoil(coords, name, filename)
+            return
+
+        messagebox.showerror("格式错误", f"无法解析文件: {filename}\n请确保它是 Selig 格式的坐标文件。")
 
     def draw_airfoil(self, coords, name, filename):
-        """绘制翼型"""
-        self.ax.clear()
-        self.ax.set_aspect('equal')
-        self.ax.grid(True, linestyle='--', alpha=0.6)
-        
-        xs, ys = zip(*coords)
-        
-        # 绘图
-        self.ax.plot(xs, ys, 'b-', linewidth=1.5, label=f"{name}")
-        self.ax.scatter(xs, ys, s=5, c='red', alpha=0.5) # 显示点
-        
-        self.ax.set_title(f"Airfoil: {name}", fontsize=16)
-        self.ax.set_xlabel("X/c", fontsize=16)
-        self.ax.set_ylabel("Y/c", fontsize=16)
-        self.ax.tick_params(axis='both', labelsize=14)
-        
-        # 自动调整范围
-        self.ax.set_xlim(-0.05, 1.05)
-        # 动态调整 Y 轴比例
-        y_max = max(abs(min(ys)), abs(max(ys)))
-        self.ax.set_ylim(-y_max * 1.5 - 0.1, y_max * 1.5 + 0.1)
-        
-        self.canvas.draw()
+        """保存翼型数据并绘制。"""
+        self.coords = coords
+        self.airfoil_name = name
+        self.filename = filename
+        self.render_airfoil()
         self.label.config(text=f"当前显示: {filename}")
+
+    def on_canvas_resize(self, event):
+        if self.coords:
+            self.render_airfoil()
+
+    def render_airfoil(self):
+        """将当前翼型缩放到 Canvas 坐标系。"""
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+        if width < 160 or height < 160:
+            return
+
+        margin_x = 70
+        margin_y = 60
+        x_min, x_max = -0.05, 1.05
+        ys = [point[1] for point in self.coords]
+        y_limit = max(abs(min(ys)), abs(max(ys))) * 1.5 + 0.1
+        y_min, y_max = -y_limit, y_limit
+        plot_width = width - 2 * margin_x
+        plot_height = height - 2 * margin_y
+
+        def to_canvas(x, y):
+            canvas_x = margin_x + (x - x_min) / (x_max - x_min) * plot_width
+            canvas_y = height - margin_y - (y - y_min) / (y_max - y_min) * plot_height
+            return canvas_x, canvas_y
+
+        self.canvas.delete("all")
+        for index in range(11):
+            x = x_min + (x_max - x_min) * index / 10
+            canvas_x, _ = to_canvas(x, 0)
+            self.canvas.create_line(canvas_x, margin_y, canvas_x, height - margin_y, fill="#d9d9d9", dash=(3, 3))
+        for index in range(9):
+            y = y_min + (y_max - y_min) * index / 8
+            _, canvas_y = to_canvas(0, y)
+            self.canvas.create_line(margin_x, canvas_y, width - margin_x, canvas_y, fill="#d9d9d9", dash=(3, 3))
+
+        axis_x, _ = to_canvas(0, 0)
+        _, axis_y = to_canvas(0, 0)
+        self.canvas.create_line(axis_x, margin_y, axis_x, height - margin_y, fill="#666666")
+        self.canvas.create_line(margin_x, axis_y, width - margin_x, axis_y, fill="#666666")
+
+        points = [to_canvas(x, y) for x, y in self.coords]
+        self.canvas.create_line(points, fill="#1565c0", width=2)
+        for point_x, point_y in points:
+            self.canvas.create_oval(point_x - 2, point_y - 2, point_x + 2, point_y + 2, fill="#d32f2f", outline="")
+
+        self.canvas.create_text(width / 2, 24, text=f"Airfoil: {self.airfoil_name}", font=("Arial", 16))
+        self.canvas.create_text(width / 2, height - 22, text="X/c", font=("Arial", 12))
+        self.canvas.create_text(22, height / 2, text="Y/c", font=("Arial", 12), angle=90)
 
 if __name__ == "__main__":
     root = tk.Tk()

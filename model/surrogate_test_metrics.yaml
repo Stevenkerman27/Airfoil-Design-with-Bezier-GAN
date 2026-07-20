@@ -1,0 +1,23 @@
+split: test
+sample_count: 5762
+model_path: model/surrogate_airfoil_group_best.pt
+training_epoch_count: 60
+selection_policy: fixed_final_epoch
+eval_loss: 0.28571274876594543
+eval_mae: 0.012249951250851154
+target_order:
+- CM
+- CL
+- CD
+per_target_mae:
+  CM: 0.005390307400375605
+  CL: 0.02921229787170887
+  CD: 0.0013110876316204667
+per_target_rmse:
+  CM: 0.008758573792874813
+  CL: 0.047219399362802505
+  CD: 0.0022143477108329535
+per_target_r2:
+  CM: 0.9714644551277161
+  CL: 0.9792134165763855
+  CD: 0.8936482667922974

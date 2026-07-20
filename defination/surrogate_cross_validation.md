@@ -33,3 +33,9 @@
 ## 配置与约束
 
 交叉验证相关参数集中在 `config.yaml`，包括测试集比例、fold 数、随机种子、固定训练 epoch 数，以及 `surrogate_dataset` 的数据划分、归一化和最终模型路径。`surrogate_cv_fold_count` 必须大于 1；翼型组数必须足以同时填充测试集与每个开发集 fold。
+
+## 训练性能与日志
+
+- 代理模型完成归一化后，将完整的 `coords`、`conditions` 和 `targets` 连续张量一次性放入 `device`。训练时在设备端打乱索引并切分 batch；验证和测试按设备端索引顺序切分。代理模型不使用 DataLoader、worker 或 CPU-GPU 的逐 batch 传输。
+- 训练损失、MAE 和逐目标误差在 GPU 上按 batch 累计，仅在每个 epoch 结束后转回 CPU 写入指标，避免逐 batch 同步。
+- `surrogate_gradient_norm_interval` 只控制梯度范数诊断的采样频率，不改变损失、反向传播、优化器更新或学习率调度。每个 epoch 采样首个 batch，并在后续每满一个间隔的 batch 采样一次；CSV 中的梯度范数均值和最大值基于这些采样值。

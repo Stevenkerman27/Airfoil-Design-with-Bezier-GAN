@@ -9,40 +9,50 @@ import yaml
 root_dir = Path(__file__).parent.parent
 sys.path.append(str(root_dir))
 
-from model import center_dense_spacing
-from utils import calculate_relative_thickness
+from cst import split_surface_t_values
+from utils import calculate_relative_thickness, normalize_airfoil_chord_coordinates
 
-# Configuration
+
 FILES_TO_DELETE = [
-    "30p-30n.dat",
-    "30p-30n-flap.dat",
-    "30p-30n-main.dat",
-    "30p-30n-slat.dat",
-    "e376.dat",
-    "e377.dat",
-    "e377m.dat",
-    "e378.dat",
-    "e379.dat",
-    "s1210.dat",
-    "s1211.dat",
-    "s1221-4deg-flap.dat",
-    "s1223.dat",
-    "s1223rtl.dat",
-    "as6091.dat",
-    "as6092.dat",
-    "as6093.dat",
-    "as6094.dat",
-    "as6095.dat",
-    "as6096.dat",
-    "as6097.dat",
-    "as6098.dat",
-    "as6099.dat",
-    "goe531.dat",
-    "ua2-180.dat",
-    "s1221.dat",
-    "goe451.dat",
-    "dsma523a.dat"
+    '30p-30n.dat',
+    '30p-30n-flap.dat',
+    '30p-30n-main.dat',
+    '30p-30n-slat.dat',
+    'e376.dat',
+    'e377.dat',
+    'e377m.dat',
+    'e378.dat',
+    'e379.dat',
+    's1210.dat',
+    's1211.dat',
+    's1221-4deg-flap.dat',
+    's1223.dat',
+    's1223rtl.dat',
+    'as6091.dat',
+    'as6092.dat',
+    'as6093.dat',
+    'as6094.dat',
+    'as6095.dat',
+    'as6096.dat',
+    'as6097.dat',
+    'as6098.dat',
+    'as6099.dat',
+    'goe531.dat',
+    'ua2-180.dat',
+    's1221.dat',
+    'goe451.dat',
+    'dsma523a.dat',
+    'naca1.dat',
+    'ua79sff.dat',
+    'ua79sfm.dat',
+    'r1145msf.dat',
+    'r1145msm.dat',
+    'goe802a.dat',
+    'goe802b.dat',
+    'goe388.dat',
+    'eiffel10.dat',
 ]
+
 
 def manage_files():
     # Set paths relative to script location
@@ -75,6 +85,8 @@ def resample_airfoils(source_dir, target_dir):
         
     num_points = config['num_output_points']
     beta = config['point_density_beta']
+    preprocess_config = config['airfoil_preprocess']
+    max_relative_thickness = preprocess_config['max_relative_thickness']
             
     target_dir.mkdir(parents=True, exist_ok=True)
     dat_files = list(source_dir.glob("*.dat"))
@@ -83,6 +95,7 @@ def resample_airfoils(source_dir, target_dir):
     fail_count = 0
     thick_count = 0
     thick_files = []
+    generated_names = set()
     
     for file_path in dat_files:
         filename = file_path.name
@@ -97,23 +110,48 @@ def resample_airfoils(source_dir, target_dir):
         else:
             output_name = filename
             
-        status, rel_thickness = resample_single_airfoil(file_path, target_dir, num_points, beta, output_name)
+        status, rel_thickness = resample_single_airfoil(
+            file_path,
+            target_dir,
+            num_points,
+            beta,
+            max_relative_thickness,
+            output_name,
+        )
         if status is True:
             success_count += 1
+            generated_names.add(output_name)
         elif status == "thick":
             thick_count += 1
             thick_files.append((filename, rel_thickness))
         else:
             fail_count += 1
+
+    stale_paths = [
+        path for path in target_dir.glob('*.dat')
+        if path.name not in generated_names
+    ]
+    for path in stale_paths:
+        path.unlink()
             
     if thick_files:
         print("\nSkipped files due to high relative thickness:")
         for name, t in thick_files:
             print(f"  {name}: {t:.2%}")
             
-    print(f"Processing complete. Success: {success_count}, Failed: {fail_count}, Skipped (thick): {thick_count}")
+    print(
+        f"Processing complete. Success: {success_count}, Failed: {fail_count}, "
+        f"Skipped (thick): {thick_count}, Removed stale: {len(stale_paths)}"
+    )
 
-def resample_single_airfoil(file_path, target_dir, num_points, beta=2.0, output_name=None):
+def resample_single_airfoil(
+    file_path,
+    target_dir,
+    num_points,
+    beta,
+    max_relative_thickness,
+    output_name=None,
+):
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = [line.strip() for line in f if line.strip()]
@@ -137,10 +175,6 @@ def resample_single_airfoil(file_path, target_dir, num_points, beta=2.0, output_
         x = coords[:, 0]
         y = coords[:, 1]
 
-        rel_thickness = calculate_relative_thickness(coords)
-        if rel_thickness > 0.20:
-            return "thick", rel_thickness
-        
         # Calculate cumulative arc length
         dx = np.diff(x)
         dy = np.diff(y)
@@ -167,12 +201,32 @@ def resample_single_airfoil(file_path, target_dir, num_points, beta=2.0, output_
         idx_le = np.argmin(x)
         s_le = float(s[idx_le])
         
-        # Get parameter t using the shared unified logic
-        t_new_torch = center_dense_spacing(num_points, s_le=s_le, beta=beta)
-        t_new = t_new_torch.numpy()
+        if not 0.0 < s_le < 1.0:
+            raise ValueError(
+                f'Leading-edge arc-length position must be in (0, 1), got {s_le}'
+            )
+        upper_t, lower_t = split_surface_t_values(num_points, beta)
+        upper_s = s_le * upper_t.numpy()
+        lower_s = s_le + (1.0 - s_le) * lower_t.numpy()
+        t_new = np.concatenate([upper_s, lower_s[1:]])
         
         resampled_x = interp_x(t_new)
         resampled_y = interp_y(t_new)
+        resampled_coords = np.column_stack([resampled_x, resampled_y])
+        expected_leading_edge_index = upper_t.shape[0] - 1
+        leading_edge_index = int(np.argmin(resampled_coords[:, 0]))
+        if leading_edge_index != expected_leading_edge_index:
+            raise ValueError(
+                'Resampled leading edge must be the shared split midpoint: '
+                f'expected {expected_leading_edge_index}, got {leading_edge_index}'
+            )
+        resampled_coords = normalize_airfoil_chord_coordinates(
+            resampled_coords,
+            leading_edge_index,
+        )
+        rel_thickness = calculate_relative_thickness(resampled_coords)
+        if rel_thickness > max_relative_thickness:
+            return "thick", rel_thickness
         
         # Ensure target dir exists
         out_name = output_name if output_name else file_path.name
@@ -180,13 +234,12 @@ def resample_single_airfoil(file_path, target_dir, num_points, beta=2.0, output_
         
         with open(out_path, 'w', encoding='utf-8') as f:
             f.write(f"{header}\n")
-            for rx, ry in zip(resampled_x, resampled_y):
+            for rx, ry in resampled_coords:
                 f.write(f" {rx:10.6f} {ry:10.6f}\n")
                 
         return True, rel_thickness
-    except Exception as e:
-        # print(f"Error resampling {file_path.name}: {e}")
-        return False, 0
+    except Exception as exc:
+        raise RuntimeError(f'Failed to resample {file_path}') from exc
 
 def validate_coordinates(target_dir, tolerance=1e-2):
     print("\n--- Validation Phase ---")

@@ -6,7 +6,6 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import torch
-from torch.utils.data import DataLoader, Subset
 
 from model import AerodynamicSurrogate
 from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
@@ -106,7 +105,7 @@ def plot_lr_range(records_by_run, path):
     plt.close()
 
 
-def run_single_lr_range_test(config, train_loader, device, total_steps):
+def run_single_lr_range_test(config, dataset, train_indices, device, total_steps):
     model = AerodynamicSurrogate(config).to(device)
     criterion = build_weighted_mse_loss(config, device)
     optimizer = torch.optim.Adam(
@@ -126,12 +125,11 @@ def run_single_lr_range_test(config, train_loader, device, total_steps):
     model.train()
 
     for _ in range(config['surrogate_lr_range_epochs']):
-        for coords, conditions, targets in train_loader:
+        for coords, conditions, targets in dataset.iter_batches(
+            train_indices, config['surrogate_batch_size'], shuffle=True
+        ):
             learning_rate = exponential_learning_rate(start_lr, end_lr, step, total_steps)
             set_learning_rate(optimizer, learning_rate)
-            coords = coords.to(device)
-            conditions = conditions.to(device)
-            targets = targets.to(device)
 
             optimizer.zero_grad()
             predictions = model(coords, conditions)
@@ -141,18 +139,20 @@ def run_single_lr_range_test(config, train_loader, device, total_steps):
                 break
             loss.backward()
             gradient_norm = compute_global_gradient_norm(model.parameters())
-            if not math.isfinite(gradient_norm):
+            if not torch.isfinite(gradient_norm):
                 stop_reason = 'non_finite_gradient'
                 break
             optimizer.step()
 
-            previous_ema, smoothed_loss = update_ema(previous_ema, loss.item(), ema_beta, step)
+            loss_value = loss.item()
+            gradient_norm_value = gradient_norm.item()
+            previous_ema, smoothed_loss = update_ema(previous_ema, loss_value, ema_beta, step)
             record = {
                 'step': step + 1,
                 'learning_rate': learning_rate,
-                'loss': loss.item(),
+                'loss': loss_value,
                 'smoothed_loss': smoothed_loss,
-                'gradient_norm': gradient_norm,
+                'gradient_norm': gradient_norm_value,
             }
             records.append(record)
             best_smoothed_loss = min(best_smoothed_loss, smoothed_loss)
@@ -178,22 +178,21 @@ def run_lr_range_test(config_path):
     dataset, _ = AirfoilSurrogateDataset.from_training_indices(
         raw_data,
         manifest['development_indices'],
+        device,
     )
-    train_set = Subset(dataset, manifest['development_indices'])
-    train_loader = DataLoader(
-        train_set,
-        batch_size=config['surrogate_batch_size'],
-        shuffle=True,
-        drop_last=False,
+    train_indices = dataset.prepare_indices(manifest['development_indices'])
+    total_steps = config['surrogate_lr_range_epochs'] * dataset.batch_count(
+        train_indices, config['surrogate_batch_size']
     )
-    total_steps = config['surrogate_lr_range_epochs'] * len(train_loader)
     if total_steps <= 1:
         raise ValueError(f'LR range test requires at least two batches, got {total_steps}')
 
     records_by_run = []
     results = []
     for run_index in range(config['surrogate_lr_range_runs']):
-        records, stop_reason = run_single_lr_range_test(config, train_loader, device, total_steps)
+        records, stop_reason = run_single_lr_range_test(
+            config, dataset, train_indices, device, total_steps
+        )
         records_by_run.append(records)
         best_record = min(records, key=lambda record: record['smoothed_loss'])
         results.append({

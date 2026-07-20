@@ -1,16 +1,14 @@
 @echo off
-set CONDA_PATH=C:\Users\zyx20\anaconda3
-set ENV_NAME=myml
+set PYTHON_EXE=C:\Users\zyx20\anaconda3\envs\myml\python.exe
 set PROJECT_DIR=%~dp0
 
 title Visualize starter
 
-echo [1/3] entering directory...
+echo [1/2] entering directory...
 cd /d "%PROJECT_DIR%"
 
-echo [2/3] activating myml: %ENV_NAME%...
-call "%CONDA_PATH%\Scripts\activate.bat" %ENV_NAME%
-
-echo [3/3] starting...
-python plot_airfoil.py
-exit
+echo [2/2] starting with myml...
+"%PYTHON_EXE%" -u plot_airfoil.py
+echo.
+echo plot_airfoil.py exited with code %ERRORLEVEL%.
+pause

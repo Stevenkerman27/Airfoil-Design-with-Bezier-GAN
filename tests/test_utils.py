@@ -26,5 +26,18 @@ class TestUtils(unittest.TestCase):
         # Expected: ~0.12
         self.assertAlmostEqual(thickness, 0.12, places=2)
 
+    def test_thickness_compares_surfaces_at_the_same_x(self):
+        coords = np.array([
+            [1.0, 0.0],
+            [0.25, 0.2],
+            [0.0, 0.0],
+            [0.75, -0.1],
+            [1.0, 0.0],
+        ])
+
+        thickness = calculate_relative_thickness(coords)
+
+        self.assertAlmostEqual(thickness, 7.0 / 30.0)
+
 if __name__ == "__main__":
     unittest.main()

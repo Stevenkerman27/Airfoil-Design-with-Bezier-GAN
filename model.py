@@ -1,72 +1,63 @@
 import torch
 import torch.nn as nn
-import yaml
-import math
+from cst import (
+    build_bernstein_basis,
+    bounded_cst_exponent,
+    decode_split_surface_cst,
+    split_surface_t_values,
+)
 
-def center_dense_spacing(M, s_le=0.5, beta=2.0):
-    # Generates points in [0, 1] dense ONLY at s_le (Leading Edge)
-    M_left = max(2, int(round(M * s_le)))
-    M_right = M - M_left + 1
-    
-    u_left = torch.linspace(0, 1, M_left)
-    t_left = s_le * (1.0 - (1.0 - u_left)**beta)
-    
-    u_right = torch.linspace(0, 1, M_right)[1:]
-    t_right = s_le + (1.0 - s_le) * (u_right**beta)
-    
-    t = torch.cat([t_left, t_right])
-    
-    # Ensure strict bounds due to float32 precision
-    t[0] = 0.0
-    t[-1] = 1.0
-    t = torch.clamp(t, 0.0, 1.0)
-    
-    return t
-
-class BezierDecoderLayer(nn.Module):
-    def __init__(self, config):
+class CSTDecoderLayer(nn.Module):
+    def __init__(self, shape_coefficient_count, num_output_points, point_density_beta):
         super().__init__()
-        self.config = config
-        self.num_control_points = self.config['num_control_points']
-        self.num_output_points = self.config['num_output_points']
-        self.point_density_beta = self.config['point_density_beta']
-        
-        # Precompute t and Bernstein polynomials
-        t = center_dense_spacing(self.num_output_points, s_le=0.5, beta=self.point_density_beta)
-        self.register_buffer('t', t)
-        
-        n = self.num_control_points - 1
-        B = torch.zeros((self.num_output_points, n + 1), dtype=torch.float64)
-        t_double = t.to(torch.float64)
-        
-        for i in range(n + 1):
-            coeff = math.comb(n, i)
-            B[:, i] = coeff * (t_double ** i) * ((1.0 - t_double) ** (n - i))
-            
-        self.register_buffer('B', B.to(torch.float32))
+        if shape_coefficient_count < 2:
+            raise ValueError(
+                'cst.shape_coefficient_count must be at least 2, '
+                f'got {shape_coefficient_count}'
+            )
+        if num_output_points < 3:
+            raise ValueError(
+                f'num_output_points must be at least 3, got {num_output_points}'
+            )
 
-    def forward(self, control_points, weights):
-        """
-        control_points: (Batch, N, 2)
-        weights: (Batch, N)
-        return: (Batch, M, 2)
-        """
-        # B shape: (M, N)
-        weighted_P = control_points * weights.unsqueeze(-1)
-        
-        # Expand B for batch multiplication
-        batch_size = control_points.shape[0]
-        B_batch = self.B.unsqueeze(0).expand(batch_size, -1, -1) # (Batch, M, N)
-        
-        # numerator: (Batch, M, 2)
-        numerator = torch.bmm(B_batch, weighted_P)
-        
-        # denominator: (Batch, M, 1)
-        denominator = torch.bmm(B_batch, weights.unsqueeze(-1))
-        
-        # Avoid division by zero
-        curve = numerator / (denominator + 1e-8)
-        return curve
+        upper_t, lower_t = split_surface_t_values(
+            num_output_points,
+            point_density_beta,
+        )
+        upper_x = 1.0 - upper_t
+        lower_x = lower_t
+        self.register_buffer('upper_x', upper_x)
+        self.register_buffer('lower_x', lower_x)
+        self.register_buffer(
+            'upper_basis',
+            build_bernstein_basis(upper_x, shape_coefficient_count),
+        )
+        self.register_buffer(
+            'lower_basis',
+            build_bernstein_basis(lower_x, shape_coefficient_count),
+        )
+
+    def forward(
+        self,
+        upper_coefficients,
+        lower_coefficients,
+        upper_te_y,
+        lower_te_y,
+        n1,
+        n2,
+    ):
+        return decode_split_surface_cst(
+            self.upper_basis,
+            self.lower_basis,
+            self.upper_x,
+            self.lower_x,
+            upper_coefficients,
+            lower_coefficients,
+            upper_te_y,
+            lower_te_y,
+            n1,
+            n2,
+        )
 
 class Generator(nn.Module):
     def __init__(self, config):
@@ -87,41 +78,89 @@ class Generator(nn.Module):
             
         self.fc_blocks = nn.Sequential(*layers)
         
-        self.num_cp = config['num_control_points']
-        self.out_layer = nn.Linear(self.hid_node, self.num_cp * 3)
-        self.bezier_layer = BezierDecoderLayer(config)
-        
-        # Determine normalized trailing edge (1.0, 0.0)
-        te_x_norm = 1.0
-        te_y_norm = 0.0
-        # Coordinate normalization is required so the fixed trailing edge matches
-        # the same coordinate system as the training data.
+        self.shape_coefficient_count = config['cst']['shape_coefficient_count']
+        self.n1_range = config['cst']['n1_range']
+        self.n2_range = config['cst']['n2_range']
+        self._validate_cst_config()
+        self.parameter_dimension = 2 * self.shape_coefficient_count + 4
+        self.out_layer = nn.Linear(self.hid_node, self.parameter_dimension)
+        self.cst_layer = CSTDecoderLayer(
+            self.shape_coefficient_count,
+            config['num_output_points'],
+            config['point_density_beta'],
+        )
+
         coord_norm = torch.load("model/coord_norm.pt", map_location='cpu', weights_only=True)
-        x_min, x_max = coord_norm['x_min'], coord_norm['x_max']
-        y_min, y_max = coord_norm['y_min'], coord_norm['y_max']
-        te_x_norm = (1.0 - x_min) / (x_max - x_min + 1e-8)
-        te_y_norm = (0.0 - y_min) / (y_max - y_min + 1e-8)
-        print(f"Generator: Normalized TE set to ({te_x_norm:.4f}, {te_y_norm:.4f})")
-            
-        self.register_buffer('fixed_pt', torch.tensor([te_x_norm, te_y_norm], dtype=torch.float32))
+        self.register_buffer('coord_x_min', torch.as_tensor(coord_norm['x_min'], dtype=torch.float32))
+        self.register_buffer('coord_x_max', torch.as_tensor(coord_norm['x_max'], dtype=torch.float32))
+        self.register_buffer('coord_y_min', torch.as_tensor(coord_norm['y_min'], dtype=torch.float32))
+        self.register_buffer('coord_y_max', torch.as_tensor(coord_norm['y_max'], dtype=torch.float32))
+
+    def _validate_cst_config(self):
+        if self.shape_coefficient_count < 2:
+            raise ValueError(
+                'cst.shape_coefficient_count must be at least 2, '
+                f'got {self.shape_coefficient_count}'
+            )
+        for name, value_range in [('n1_range', self.n1_range), ('n2_range', self.n2_range)]:
+            if len(value_range) != 2:
+                raise ValueError(f'cst.{name} must contain exactly two values')
+            lower, upper = value_range
+            if lower <= 0.0 or upper <= lower:
+                raise ValueError(
+                    f'cst.{name} must satisfy 0 < lower < upper, got {value_range}'
+                )
+
+    @staticmethod
+    def _bounded_parameter(raw_value, value_range):
+        return bounded_cst_exponent(raw_value, value_range)
+
+    def decode_parameters(self, parameters):
+        offset = 0
+
+        upper_coefficients = parameters[:, offset:offset + self.shape_coefficient_count]
+        offset += self.shape_coefficient_count
+        lower_coefficients = parameters[:, offset:offset + self.shape_coefficient_count]
+        offset += self.shape_coefficient_count
+        upper_te_y = parameters[:, offset:offset + 1]
+        offset += 1
+        lower_te_y = parameters[:, offset:offset + 1]
+        offset += 1
+        n1 = self._bounded_parameter(parameters[:, offset:offset + 1], self.n1_range)
+        offset += 1
+        n2 = self._bounded_parameter(parameters[:, offset:offset + 1], self.n2_range)
+        offset += 1
+        if offset != self.parameter_dimension:
+            raise RuntimeError(
+                f'Expected {self.parameter_dimension} generator parameters, consumed {offset}'
+            )
+        return (
+            upper_coefficients,
+            lower_coefficients,
+            upper_te_y,
+            lower_te_y,
+            n1,
+            n2,
+        )
+
+    def normalize_coordinates(self, physical_coordinates):
+        x_range = self.coord_x_max - self.coord_x_min
+        y_range = self.coord_y_max - self.coord_y_min
+        if x_range <= 0.0 or y_range <= 0.0:
+            raise ValueError('model/coord_norm.pt must have positive x and y ranges')
+        normalized_x = (physical_coordinates[..., 0] - self.coord_x_min) / x_range
+        normalized_y = (physical_coordinates[..., 1] - self.coord_y_min) / y_range
+        return torch.stack([normalized_x, normalized_y], dim=-1)
 
     def forward(self, noise, cond):
         x = torch.cat([noise, cond], dim=1)
         x = self.fc_blocks(x)
-        x = self.out_layer(x) # (Batch, N * 3)
-        
-        # Reshape to control points and weights
-        x = x.view(-1, self.num_cp, 3)
-        control_points = x[:, :, :2].clone()
-        
-        # Fix the first and last control points to (1, 0)
-        control_points[:, 0, :] = self.fixed_pt
-        control_points[:, -1, :] = self.fixed_pt
-        
-        # Weights should be positive to avoid negative denominators / singular curves
-        weights = torch.nn.functional.softplus(x[:, :, 2])
-        
-        curve = self.bezier_layer(control_points, weights) # (Batch, M, 2)
+        parameters = self.out_layer(x)
+        decoded_parameters = self.decode_parameters(parameters)
+        physical_curve = self.cst_layer(
+            *decoded_parameters,
+        )
+        curve = self.normalize_coordinates(physical_curve)
         return curve.view(curve.size(0), -1) # Flatten to (Batch, M*2)
 
 class Discriminator(nn.Module):

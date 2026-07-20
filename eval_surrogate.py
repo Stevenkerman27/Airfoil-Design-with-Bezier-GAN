@@ -12,7 +12,6 @@ from train_surrogate import (
     build_weighted_mse_loss,
     evaluate,
     load_config,
-    make_loader,
     plot_prediction_scatter,
     resolve_device,
 )
@@ -71,12 +70,21 @@ def run_evaluation(config_path, model_path=None, metrics_path=None):
     dataset_config = resolve_surrogate_dataset_config(config)
     raw_data = torch.load(dataset_config['data_path'], weights_only=True)
     manifest = load_cross_validation_manifest(raw_data, config)
-    dataset = AirfoilSurrogateDataset.from_norm_path(raw_data, dataset_config['norm_path'])
-    dataloader = make_loader(dataset, manifest['test_indices'], config, shuffle=False)
+    dataset = AirfoilSurrogateDataset.from_norm_path(
+        raw_data, dataset_config['norm_path'], device
+    )
+    test_indices = dataset.prepare_indices(manifest['test_indices'])
     checkpoint_path = model_path if model_path is not None else dataset_config['best_model_path']
     model = AerodynamicSurrogate(config).to(device)
     checkpoint = load_surrogate_checkpoint(model, checkpoint_path, device)
-    result = evaluate(model, dataloader, build_weighted_mse_loss(config, device), dataset, device)
+    result = evaluate(
+        model,
+        dataset,
+        test_indices,
+        build_weighted_mse_loss(config, device),
+        config['surrogate_batch_size'],
+        device,
+    )
     metrics = {
         'split': 'test',
         'sample_count': len(manifest['test_indices']),
