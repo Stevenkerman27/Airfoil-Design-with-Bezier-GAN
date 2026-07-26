@@ -56,8 +56,6 @@ def test_surrogate_coordinate_normalization_uses_local_chord_frame_first():
         [5.0, 1.0],
     ]])
     coord_stats = {
-        'x_min': torch.tensor(0.0),
-        'x_max': torch.tensor(1.0),
         'y_min': torch.tensor(-0.5),
         'y_max': torch.tensor(0.5),
     }

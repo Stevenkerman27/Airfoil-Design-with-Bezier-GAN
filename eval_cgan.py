@@ -9,18 +9,18 @@ import numpy as np
 import torch
 import yaml
 
+from artifact_io import save_report_figure
 from foildata.xfoil import run_xfoil_single
+from gan_conditions import GAN_LABEL_ORDER
 from model import Generator
-from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
+from surrogate_split import load_cross_validation_manifest
 from utils import calculate_relative_thickness
 
 
 DEFAULT_N_COND = 60
 DEFAULT_K_SAMPLES = 20
 DEFAULT_TOP_M = 5
-GAN_LABEL_ORDER = ['alpha', 'Re', 'CL', 'CM']
-
-
+SURROGATE_DATASET_PATH = 'model/airfoil_dataset.pt'
 def resolve_device(config):
     device_cfg = config['device'].lower()
     if device_cfg == 'cuda' and torch.cuda.is_available():
@@ -33,8 +33,7 @@ def resolve_device(config):
 
 
 def load_eval_conditions(config, split_name, count):
-    dataset_config = resolve_surrogate_dataset_config(config)
-    raw_data = torch.load(dataset_config['data_path'], map_location='cpu', weights_only=True)
+    raw_data = torch.load(SURROGATE_DATASET_PATH, map_location='cpu', weights_only=True)
     manifest = load_cross_validation_manifest(raw_data, config)
     if split_name != 'test':
         raise ValueError(f"GAN evaluation only supports the independent test split, got '{split_name}'")
@@ -69,7 +68,7 @@ def plot_heatmap(alpha, reynolds, errors, title, path):
     plt.title(title)
     plt.grid(True, linestyle='--', alpha=0.3)
     plt.tight_layout()
-    plt.savefig(path, dpi=300)
+    save_report_figure(plt.gcf(), path, dpi=300)
     plt.close()
 
 
@@ -174,10 +173,10 @@ def evaluate_model(model_path, tag, config, device, split_name, n_cond, k_sample
         cl_scores.append(np.mean(cl_errors) + variance_weight * np.var(cl_errors))
         weighted_scores.append(np.mean(weighted_errors) + variance_weight * np.var(weighted_errors))
 
-    os.makedirs('model', exist_ok=True)
-    plot_heatmap(alpha_values, reynolds_values, cm_scores, f'{tag} CM error', f'model/eval_{tag.lower()}_cm.png')
-    plot_heatmap(alpha_values, reynolds_values, cl_scores, f'{tag} CL error', f'model/eval_{tag.lower()}_cl.png')
-    plot_heatmap(alpha_values, reynolds_values, weighted_scores, f'{tag} weighted CM/CL error', f'model/eval_{tag.lower()}_weighted.png')
+    os.makedirs('reports/gan', exist_ok=True)
+    plot_heatmap(alpha_values, reynolds_values, cm_scores, f'{tag} CM error', f'reports/gan/eval_{tag.lower()}_cm.png')
+    plot_heatmap(alpha_values, reynolds_values, cl_scores, f'{tag} CL error', f'reports/gan/eval_{tag.lower()}_cl.png')
+    plot_heatmap(alpha_values, reynolds_values, weighted_scores, f'{tag} weighted CM/CL error', f'reports/gan/eval_{tag.lower()}_weighted.png')
 
     valid_results = [result for result in results if result['success']]
     valid_results.sort(key=lambda result: result['weighted_err'])

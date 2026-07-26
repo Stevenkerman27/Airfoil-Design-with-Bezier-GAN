@@ -70,6 +70,27 @@ def cst_surface_from_basis(basis, x_values, coefficients, trailing_edge_y, n1, n
     return class_function * shape + x_values * trailing_edge_y
 
 
+def trailing_edge_crossing_loss(
+    basis,
+    x_values,
+    weights,
+    upper_coefficients,
+    lower_coefficients,
+    upper_te_y,
+    lower_te_y,
+    n1,
+    n2,
+):
+    """Return the weighted sum of upper/lower crossings near the trailing edge."""
+    upper_y = cst_surface_from_basis(
+        basis, x_values, upper_coefficients, upper_te_y, n1, n2
+    )
+    lower_y = cst_surface_from_basis(
+        basis, x_values, lower_coefficients, lower_te_y, n1, n2
+    )
+    return (torch.relu(lower_y - upper_y) * weights).sum(dim=1).mean()
+
+
 def decode_split_surface_cst(
     upper_basis,
     lower_basis,

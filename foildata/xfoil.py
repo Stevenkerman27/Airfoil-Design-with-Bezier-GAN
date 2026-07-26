@@ -56,6 +56,13 @@ def _execute_xfoil(commands, cwd, timeout):
         stdout, stderr = process.communicate()
         return stdout, stderr, True
 
+
+def _build_xfoil_geometry_setup_command(airfoil_filename):
+    return f'''\
+NORM
+LOAD {airfoil_filename}
+PANE'''
+
 def run_xfoil(airfoil_name, reynolds, alpha_start, alpha_end, alpha_step, timeout=10):
     """
     airfoil_name: .dat文件名
@@ -76,11 +83,11 @@ def run_xfoil(airfoil_name, reynolds, alpha_start, alpha_end, alpha_step, timeou
     if os.path.exists(save_file_abs):
         os.remove(save_file_abs)
 
+    geometry_command = _build_xfoil_geometry_setup_command(airfoil_name)
     commands = f"""
-    NORM
-    LOAD {airfoil_name}
+    {geometry_command}
     OPER
-    ITER {20}
+    ITER {50}
     VISC {reynolds}
     PACC
     {save_file_rel}
@@ -99,14 +106,110 @@ def run_xfoil(airfoil_name, reynolds, alpha_start, alpha_end, alpha_step, timeou
     success = os.path.exists(save_file_abs) and os.path.getsize(save_file_abs) > 0
     return success, is_timeout
 
-def run_xfoil_single(coords, reynolds, alpha, timeout=2, return_all=False):
+def _build_single_alpha_command(alpha, alpha_continuation):
+    alpha = float(alpha)
+    if not np.isfinite(alpha):
+        raise ValueError(f'alpha must be finite, got {alpha}')
+    if not alpha_continuation:
+        return f'ALFA {alpha}', 1
+    if alpha < 0.0:
+        raise ValueError(
+            f'alpha continuation only supports non-negative targets, got {alpha}'
+        )
+    integer_alpha = round(alpha)
+    if not np.isclose(alpha, integer_alpha, rtol=0.0, atol=1e-9):
+        raise ValueError(
+            f'alpha continuation requires an integer-degree target, got {alpha}'
+        )
+    if integer_alpha == 0:
+        return 'ALFA 0', 1
+    return f'ASEQ 0 {integer_alpha} 1', integer_alpha + 1
+
+
+def _parse_xfoil_target_result(stdout, target_alpha):
+    result = {}
+    for line in reversed(stdout.splitlines()):
+        line_upper = line.upper()
+        parts = line.split()
+        upper_parts = [part.upper() for part in parts]
+
+        if 'CD =' in line_upper or 'CM =' in line_upper:
+            try:
+                if 'CD' in upper_parts:
+                    result['CD'] = float(parts[upper_parts.index('CD') + 2])
+                elif 'CD=' in upper_parts:
+                    result['CD'] = float(parts[upper_parts.index('CD=') + 1])
+
+                if 'CM' in upper_parts:
+                    result['CM'] = float(parts[upper_parts.index('CM') + 2])
+                elif 'CM=' in upper_parts:
+                    result['CM'] = float(parts[upper_parts.index('CM=') + 1])
+            except (ValueError, IndexError):
+                result = {}
+            continue
+
+        if 'CL =' not in line_upper:
+            continue
+        try:
+            parsed_alpha = float(parts[upper_parts.index('A') + 2])
+            parsed_cl = float(parts[upper_parts.index('CL') + 2])
+        except (ValueError, IndexError):
+            result = {}
+            continue
+        if not np.isclose(parsed_alpha, target_alpha, rtol=0.0, atol=5e-4):
+            result = {}
+            continue
+        result['CL'] = parsed_cl
+        required_coefficients = ('CL', 'CD', 'CM')
+        if any(name not in result for name in required_coefficients):
+            return None
+        if not all(np.isfinite(result[name]) for name in required_coefficients):
+            return None
+        return result
+    return None
+
+
+def _target_alpha_has_convergence_failure(stdout, target_alpha):
+    current_alpha = None
+    for line in stdout.splitlines():
+        line_upper = line.upper()
+        parts = line.split()
+        upper_parts = [part.upper() for part in parts]
+        if 'CL =' in line_upper:
+            try:
+                current_alpha = float(parts[upper_parts.index('A') + 2])
+            except (ValueError, IndexError):
+                current_alpha = None
+            continue
+        if (
+            'VISCAL:' in line_upper
+            and 'CONVERGENCE FAILED' in line_upper
+            and current_alpha is not None
+            and np.isclose(current_alpha, target_alpha, rtol=0.0, atol=5e-4)
+        ):
+            return True
+    return False
+
+
+def run_xfoil_single(
+    coords,
+    reynolds,
+    alpha,
+    timeout=2,
+    return_all=False,
+    alpha_continuation=False,
+):
     """
     Evaluates a single airfoil using Xfoil.
     Returns the Cl value if successful (or a dict of CL, CD, CM if return_all=True), 
     or None if it fails to converge.
     """
-    import tempfile
     import uuid
+
+    alpha_command, alpha_calculation_count = _build_single_alpha_command(
+        alpha,
+        alpha_continuation,
+    )
     
     # Generate unique filename for the temporary coordinates
     temp_filename = f"temp_foil_{uuid.uuid4().hex[:8]}.dat"
@@ -122,68 +225,37 @@ def run_xfoil_single(coords, reynolds, alpha, timeout=2, return_all=False):
             for pt in coords:
                 f.write(f"{pt[0]:.6f} {pt[1]:.6f}\n")
                 
+        geometry_command = _build_xfoil_geometry_setup_command(temp_filename)
         commands = f"""
-        NORM
-        LOAD {temp_filename}
+        {geometry_command}
         OPER
         ITER 50
         VISC {reynolds}
-        ALFA {alpha}
+        VPAR
+        VACC 0
+
+        {alpha_command}
         QUIT
         """
         
-        stdout, _, is_timeout = _execute_xfoil(commands, temp_dir, timeout=timeout)
+        stdout, _, is_timeout = _execute_xfoil(
+            commands,
+            temp_dir,
+            timeout=timeout * alpha_calculation_count,
+        )
         
         if is_timeout:
             return None
+
+        if _target_alpha_has_convergence_failure(stdout, float(alpha)):
+            return None
             
-        # Parse output for Cl, Cd, Cm
-        # XFOIL 6.99 output format:
-        #        a =  2.000      CL =  0.5121
-        #       Cm = -0.0611     CD =  0.00991   =>   CDf =  0.00608    CDp =  0.00383
-        
-        res = {}
-        for line in reversed(stdout.split('\n')):
-            line_upper = line.upper()
-            parts = line.split()
-            
-            # Look for CD and Cm (usually on one line)
-            if 'CD =' in line_upper or 'CM =' in line_upper:
-                try:
-                    # Handle both CD and CD = 
-                    if 'CD' in parts:
-                        res['CD'] = float(parts[parts.index('CD') + 2])
-                    elif 'CD=' in parts:
-                        res['CD'] = float(parts[parts.index('CD=') + 1])
-                        
-                    if 'Cm' in parts:
-                        res['CM'] = float(parts[parts.index('Cm') + 2])
-                    elif 'Cm=' in parts:
-                        res['CM'] = float(parts[parts.index('Cm=') + 1])
-                    elif 'CM' in parts:
-                        res['CM'] = float(parts[parts.index('CM') + 2])
-                except (ValueError, IndexError):
-                    pass
-            
-            # Look for CL and alpha (usually on the preceding line in the output, 
-            # so following line when reading reversed)
-            if 'CL =' in line_upper:
-                try:
-                    if 'CL' in parts:
-                        res['CL'] = float(parts[parts.index('CL') + 2])
-                    elif 'CL=' in parts:
-                        res['CL'] = float(parts[parts.index('CL=') + 1])
-                    
-                    if not return_all:
-                        if 'CL' in res:
-                            return res['CL']
-                    else:
-                        # If we found CL, we assume this is the most recent converged point
-                        if 'CL' in res:
-                            return res
-                except (ValueError, IndexError):
-                    pass
-        return None
+        result = _parse_xfoil_target_result(stdout, float(alpha))
+        if result is None:
+            return None
+        if return_all:
+            return result
+        return result['CL']
     finally:
         if os.path.exists(temp_filepath):
             os.remove(temp_filepath)

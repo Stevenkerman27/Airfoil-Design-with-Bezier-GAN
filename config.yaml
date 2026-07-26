@@ -7,7 +7,6 @@ cst:
   n1_range: [0.25, 1.0]
   n2_range: [0.5, 2.0]
 cst_encode:
-  data_dir: foildata/processed_foil
   batch_size: 64
   lr: 0.005
   iterations: 700
@@ -16,32 +15,31 @@ cst_encode:
   loss_scale: 100.0
   coefficient_reg: 1.0e-6
   log_every_airfoils: 50
-  encoded_path: model/cst_encoded_airfoils.pt
-  report_path: model/cst_encode_report.yaml
-  worst_case_dir: model/cst_encode_worst10
   worst_case_count: 10
 noise_dimension: 6
-gen_hid_node: 128
+gen_hid_node: 256
 gen_hid_layer: 2
 dis_hid_node: 256
 dis_hid_layer: 2
 alpha_range_step: [0,8,1]
 Re_range_step: [1e5, 6e5, 1e5]
-disc_conv_kernel: 15
+disc_conv_kernel: 3
 disc_conv_channels: 16
-disc_conv2_kernel: 11
+disc_conv2_kernel: 3
 disc_conv2_channels: 16
-disc_conv2_stride: 2
+disc_conv2_stride: 3
 cond_dim: 4
-lr: 2e-4
-epochs: 120
+lr: 1e-4
+epochs: 50
 n_critic: 3
-lambda_gp: 10
-gan_aux_start_epoch: 40
-gan_aux_ramp_epochs: 20
-gan_adv_loss_final_weight: 0.5
+lambda_gp: 5
+gan_aux_start_epoch: 50
+gan_aux_ramp_epochs: 10
+gan_adv_loss_final_weight: 0.8
 gan_surrogate_loss_weight: 25.0
-gan_surrogate_target_loss_weights: [10.0, 1.0]  # 顺序为 [CM, CL]
+gan_surrogate_target_loss_weights: [3.0, 2.0]  # 顺序为 [CM, CL]
+gan_trailing_edge_crossing_point_count: 3
+gan_trailing_edge_crossing_te_weight: 0.2
 batch_size: 32
 device: cuda  # 设置计算设备: auto (自动选择), cuda, 或 cpu
 max_workers: 16
@@ -79,17 +77,49 @@ surrogate_lr_range_epochs: 1
 surrogate_lr_range_runs: 5
 surrogate_lr_range_ema_beta: 0.98
 surrogate_lr_range_max_loss_multiplier: 4.0
-surrogate_dataset:
-  data_path: model/airfoil_dataset.pt
-  split_path: model/surrogate_airfoil_group_cv_split.pt
-  norm_path: model/surrogate_airfoil_group_norm.pt
-  best_model_path: model/surrogate_airfoil_group_best.pt
+gan_exploration: #潜空间优化
+  condition_count: 24
+  empirical_condition_fraction: 0.7
+  mahalanobis_radius: 2.0
+  noise_samples_per_condition: 12
+  generation_batch_size: 32
+  xfoil_timeout_seconds: 2
+  latent_optimization_start_count: 12
+  latent_optimization_steps: 100
+  latent_optimization_learning_rate: 0.03
+  latent_trust_radius: 1.5
+  cl_tolerance: 0.03
+  cm_tolerance: 0.006
+  cl_penalty_weight: 100.0
+  cm_penalty_weight: 2500.0
+alternating_finetuning: #交替微调
+  successful_samples_per_operating_condition: 20
+  max_xfoil_attempts_per_operating_condition: 300
+  noise_samples_per_condition: 4
+  generation_batch_size: 32
+  xfoil_timeout_seconds: 2
+  checkpoint_interval_collections: 5
+  existing_to_sampled_ratios: [[7, 3]]
+  mahalanobis_radii: [1.5]
+  surrogate_epochs_per_round: 20
+  surrogate_learning_rate: 2.0e-4
+  surrogate_generated_batch_size: 32
+  surrogate_original_replay_batch_size: 32
+  surrogate_historical_to_new_ratio: [1, 1]
+  surrogate_lambda_generated: 1.0
+  surrogate_lambda_original: 1.0
+  surrogate_lambda_anchor: 0.0
+  gan_epochs_per_round: 20
+  gan_learning_rate: 2.0e-4
+  gan_batch_size: 32
+  gan_real_original_to_generated_ratio: [1, 1]
+  gan_adversarial_weight: 1.0
+  gan_aerodynamic_weight: 25.0
 optuna:
   study_name: surrogate_hpo
   n_trials: 50
   direction: minimize
   pruner: none
-  best_params_path: model/surrogate_optuna_best.yaml
   search_space:
     surrogate_weight_decay: [1e-8, 1e-3, log]
     surrogate_batch_size: [16, 32, 64]

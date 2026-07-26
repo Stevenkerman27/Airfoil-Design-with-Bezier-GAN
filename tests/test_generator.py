@@ -20,6 +20,8 @@ def generator_config(shape_coefficient_count=10):
         'gen_hid_layer': 2,
         'num_output_points': 100,
         'point_density_beta': 1.3,
+        'gan_trailing_edge_crossing_point_count': 3,
+        'gan_trailing_edge_crossing_te_weight': 80.0,
         'cst': {
             'shape_coefficient_count': shape_coefficient_count,
             'n1_range': [0.25, 1.0],
@@ -76,6 +78,60 @@ def test_generator_preserves_finite_trailing_edge_terms(_load):
     assert torch.equal(physical_curve[:, 50, :], torch.zeros(1, 2))
     assert torch.allclose(physical_curve[:, 0, 1], torch.tensor([0.03]))
     assert torch.allclose(physical_curve[:, -1, 1], torch.tensor([-0.02]))
+
+
+@patch('model.torch.load', return_value=coordinate_normalization())
+def test_trailing_edge_crossing_loss_matches_paper_regularizer(_load):
+    generator = Generator(generator_config())
+    parameters = torch.zeros(2, generator.parameter_dimension, requires_grad=True)
+    with torch.no_grad():
+        parameters[0, 20] = 0.01
+        parameters[0, 21] = -0.02
+        parameters[1, 20] = -0.01
+        parameters[1, 21] = 0.02
+
+    crossing_loss = generator.cst_layer.trailing_edge_crossing_loss(
+        *generator.decode_parameters(parameters)
+    )
+
+    expected_weighted_x_sum = torch.sum(
+        generator.cst_layer.trailing_edge_crossing_weights
+        * generator.cst_layer.trailing_edge_crossing_x
+    )
+    expected_loss = 0.5 * 0.03 * expected_weighted_x_sum
+    assert torch.allclose(crossing_loss, expected_loss, atol=1e-6)
+    assert torch.allclose(
+        generator.cst_layer.trailing_edge_crossing_weights,
+        torch.tensor([80.0, 40.0, 0.0]),
+    )
+    assert torch.allclose(
+        generator.cst_layer.trailing_edge_crossing_x,
+        torch.tensor([1.0, 0.974078, 0.948315]),
+        atol=1e-6,
+    )
+    crossing_loss.backward()
+    assert torch.isfinite(parameters.grad).all()
+    assert torch.allclose(parameters.grad[1, 20], -0.5 * expected_weighted_x_sum)
+    assert torch.allclose(parameters.grad[1, 21], 0.5 * expected_weighted_x_sum)
+    assert parameters.grad[0, 20] == 0.0
+    assert parameters.grad[0, 21] == 0.0
+
+
+@patch('model.torch.load', return_value=coordinate_normalization())
+def test_generator_returns_trailing_edge_loss_without_changing_curve_output(_load):
+    generator = Generator(generator_config())
+    noise = torch.randn(3, generator.noise_dim)
+    conditions = torch.randn(3, generator.cond_dim)
+
+    expected_curve = generator(noise, conditions)
+    actual_curve, crossing_loss = generator.generate_with_trailing_edge_crossing_loss(
+        noise,
+        conditions,
+    )
+
+    assert torch.equal(actual_curve, expected_curve)
+    assert crossing_loss.ndim == 0
+    assert crossing_loss >= 0.0
 
 
 @patch('model.torch.load', return_value=coordinate_normalization())

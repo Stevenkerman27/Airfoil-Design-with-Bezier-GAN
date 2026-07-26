@@ -9,21 +9,25 @@ import numpy as np
 import torch
 import yaml
 
+from artifact_io import report_generated_at, save_report_figure
 from model import AerodynamicSurrogate
 from surrogate_split import (
     build_fold_training_indices,
     load_cross_validation_manifest,
-    resolve_surrogate_dataset_config,
 )
+from utils import normalize_airfoil_chord_coordinates
 
 
 DATASET_LABEL_NAMES = ['alpha', 'Re', 'CL', 'CM']
 DATASET_CD_KEY = 'cd'
 SURROGATE_CONDITION_NAMES = ['alpha', 'Re']
 SURROGATE_TARGET_NAMES = ['CM', 'CL', 'CD']
-LOSS_PLOT_PATH = 'model/surrogate_loss.png'
-ERROR_PLOT_PATH = 'model/surrogate_error.png'
-TRAINING_METRICS_PATH = 'model/surrogate_training_metrics.csv'
+LOSS_PLOT_PATH = 'reports/surrogate/surrogate_loss.png'
+ERROR_PLOT_PATH = 'reports/surrogate/surrogate_error.png'
+TRAINING_METRICS_PATH = 'reports/surrogate/surrogate_training_metrics.csv'
+SURROGATE_DATASET_PATH = 'model/airfoil_dataset.pt'
+SURROGATE_NORM_PATH = 'model/surrogate_airfoil_group_norm.pt'
+SURROGATE_BEST_MODEL_PATH = 'model/surrogate_airfoil_group_best.pt'
 CLR_CONFIG_KEYS = (
     'surrogate_clr_mode',
     'surrogate_clr_base_lr',
@@ -33,7 +37,7 @@ CLR_CONFIG_KEYS = (
 SURROGATE_GRADIENT_NORM_INTERVAL_KEY = 'surrogate_gradient_norm_interval'
 CLR_MODE = 'triangular2'
 TRAINING_METRIC_FIELDS = (
-    ['epoch', 'train_loss', 'train_mae']
+    ['generated_at', 'epoch', 'train_loss', 'train_mae']
     + [f'train_{target.lower()}_mse' for target in SURROGATE_TARGET_NAMES]
     + [f'train_{target.lower()}_mae' for target in SURROGATE_TARGET_NAMES]
     + ['learning_rate', 'train_grad_norm_mean', 'train_grad_norm_max']
@@ -94,14 +98,20 @@ class AirfoilSurrogateDataset:
         missing_sections = [name for name in required_sections if name not in norm_state]
         if missing_sections:
             raise ValueError(f'Normalization state is missing sections: {missing_sections}')
+        required_coord_keys = ('y_min', 'y_max')
+        missing_coord_keys = [
+            name for name in required_coord_keys if name not in norm_state['coord']
+        ]
+        if missing_coord_keys:
+            raise ValueError(
+                f'Coordinate normalization state is missing keys: {missing_coord_keys}'
+            )
         if norm_state['condition']['names'] != self.condition_names:
             raise ValueError(
                 f"Unexpected condition names: {norm_state['condition']['names']}"
             )
         if norm_state['target']['names'] != self.target_names:
             raise ValueError(f"Unexpected target names: {norm_state['target']['names']}")
-        self.x_min = norm_state['coord']['x_min'].float().to(self.device)
-        self.x_max = norm_state['coord']['x_max'].float().to(self.device)
         self.y_min = norm_state['coord']['y_min'].float().to(self.device)
         self.y_max = norm_state['coord']['y_max'].float().to(self.device)
         self.condition_mean = norm_state['condition']['mean'].float().to(self.device)
@@ -112,12 +122,11 @@ class AirfoilSurrogateDataset:
     def build_norm_state(self, raw_data, training_indices):
         train_items = [raw_data[index] for index in training_indices]
         coords = torch.stack([item['x'] for item in train_items]).float().view(len(train_items), -1, 2)
+        coords = normalize_airfoil_chord_coordinates(coords)
         conditions = torch.stack([self.extract_conditions(item) for item in train_items]).float()
         targets = torch.stack([self.extract_targets(item) for item in train_items]).float()
         return {
             'coord': {
-                'x_min': coords[:, :, 0].min(),
-                'x_max': coords[:, :, 0].max(),
                 'y_min': coords[:, :, 1].min(),
                 'y_max': coords[:, :, 1].max(),
             },
@@ -140,9 +149,9 @@ class AirfoilSurrogateDataset:
             [item[self.cd_key] for item in raw_data], dtype=torch.float32
         )
         coords = coords.to(self.device)
+        coords = normalize_airfoil_chord_coordinates(coords)
         labels = labels.to(self.device)
         drag_coefficients = drag_coefficients.to(self.device)
-        coords[:, :, 0] = (coords[:, :, 0] - self.x_min) / (self.x_max - self.x_min + 1e-8)
         coords[:, :, 1] = (coords[:, :, 1] - self.y_min) / (self.y_max - self.y_min + 1e-8)
         conditions = (labels[:, self.condition_indices] - self.condition_mean) / self.condition_std
         target_columns = []
@@ -215,17 +224,15 @@ def resolve_device(config):
 
 
 def load_raw_data_and_manifest(config):
-    dataset_config = resolve_surrogate_dataset_config(config)
-    raw_data = torch.load(dataset_config['data_path'], weights_only=True)
+    raw_data = torch.load(SURROGATE_DATASET_PATH, weights_only=True)
     if not raw_data:
-        raise ValueError(f"Dataset is empty: {dataset_config['data_path']}")
+        raise ValueError(f'Dataset is empty: {SURROGATE_DATASET_PATH}')
     return raw_data, load_cross_validation_manifest(raw_data, config)
 
 
 def save_normalization_state(norm_state, config, training_indices):
-    dataset_config = resolve_surrogate_dataset_config(config)
     manifest = load_cross_validation_manifest(
-        torch.load(dataset_config['data_path'], weights_only=True),
+        torch.load(SURROGATE_DATASET_PATH, weights_only=True),
         config,
     )
     saved_state = {
@@ -237,7 +244,7 @@ def save_normalization_state(norm_state, config, training_indices):
         'development_sample_count': len(manifest['development_indices']),
         **norm_state,
     }
-    norm_path = dataset_config['norm_path']
+    norm_path = SURROGATE_NORM_PATH
     os.makedirs(os.path.dirname(norm_path), exist_ok=True)
     torch.save(saved_state, norm_path)
     return norm_path
@@ -265,8 +272,8 @@ def evaluate(model, dataset, indices, criterion, batch_size, device):
             loss = criterion(prediction, target)
             prediction_real = dataset.denormalize_targets(prediction)
             target_real = dataset.denormalize_targets(target)
-            total_loss += loss
-            total_mae += torch.mean(torch.abs(prediction_real - target_real))
+            total_loss += loss * target.size(0)
+            total_mae += torch.mean(torch.abs(prediction_real - target_real)) * target.size(0)
             batch_count += 1
             sample_count += target.size(0)
             target_squared_error_sum += torch.sum((prediction - target) ** 2, dim=0)
@@ -276,8 +283,8 @@ def evaluate(model, dataset, indices, criterion, batch_size, device):
     if batch_count == 0:
         raise ValueError('Evaluation batch iterator produced zero batches')
     return {
-        'loss': (total_loss / batch_count).item(),
-        'mae': (total_mae / batch_count).item(),
+        'loss': (total_loss / sample_count).item(),
+        'mae': (total_mae / sample_count).item(),
         'per_target_mse': target_squared_error_sum.div(sample_count).cpu(),
         'per_target_mae': target_absolute_error_sum.div(sample_count).cpu(),
         'predictions': torch.cat(predictions, dim=0).cpu(),
@@ -402,6 +409,7 @@ def initialize_training_metrics(path):
 
 
 def append_training_metrics(path, metrics):
+    metrics = {'generated_at': report_generated_at(), **metrics}
     if set(metrics) != set(TRAINING_METRIC_FIELDS):
         raise ValueError('Training metric fields do not match schema')
     with open(path, 'a', encoding='utf-8', newline='') as file:
@@ -431,7 +439,7 @@ def plot_training_curve(values, ylabel, title, path):
     plt.title(title)
     plt.grid(True, alpha=0.4)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    plt.savefig(path)
+    save_report_figure(plt.gcf(), path)
     plt.close()
 
 
@@ -450,7 +458,7 @@ def plot_prediction_scatter(targets, predictions, target_index, title, path):
     plt.grid(True, alpha=0.4)
     plt.tight_layout()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    plt.savefig(path)
+    save_report_figure(plt.gcf(), path)
     plt.close()
 
 
@@ -543,8 +551,7 @@ def run_cross_validation(config, trial=None):
 
 
 def save_final_checkpoint(model, config, norm_path):
-    dataset_config = resolve_surrogate_dataset_config(config)
-    checkpoint_path = dataset_config['best_model_path']
+    checkpoint_path = SURROGATE_BEST_MODEL_PATH
     os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
     torch.save({
         'model_state_dict': model.state_dict(),

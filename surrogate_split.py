@@ -6,17 +6,7 @@ import torch
 FOIL_ID_KEY = 'foil_id'
 SPLIT_STRATEGY_AIRFOIL_GROUP = 'airfoil_group'
 SPLIT_MANIFEST_VERSION = 2
-
-
-def resolve_surrogate_dataset_config(config):
-    if 'surrogate_dataset' not in config:
-        raise ValueError('config is missing surrogate_dataset')
-    dataset_config = config['surrogate_dataset']
-    required_keys = ('data_path', 'split_path', 'norm_path', 'best_model_path')
-    missing_keys = [key for key in required_keys if key not in dataset_config]
-    if missing_keys:
-        raise ValueError(f'surrogate_dataset is missing required keys: {missing_keys}')
-    return dataset_config
+SURROGATE_SPLIT_PATH = 'model/surrogate_airfoil_group_cv_split.pt'
 
 
 def validate_cross_validation_config(config):
@@ -212,9 +202,7 @@ def validate_cross_validation_manifest(raw_data, manifest):
 
 def load_cross_validation_manifest(raw_data, config):
     validate_cross_validation_config(config)
-    dataset_config = resolve_surrogate_dataset_config(config)
-    manifest_path = dataset_config['split_path']
-    manifest = torch.load(manifest_path, weights_only=True)
+    manifest = torch.load(SURROGATE_SPLIT_PATH, weights_only=True)
     validate_cross_validation_manifest(raw_data, manifest)
     expected_values = {
         'test_ratio': config['surrogate_test_ratio'],
@@ -224,7 +212,7 @@ def load_cross_validation_manifest(raw_data, config):
     for key, expected_value in expected_values.items():
         if manifest[key] != expected_value:
             raise ValueError(
-                f"Split manifest {key} mismatch in {manifest_path}: expected "
+                f"Split manifest {key} mismatch in {SURROGATE_SPLIT_PATH}: expected "
                 f"{expected_value}, got {manifest[key]}"
             )
     return manifest

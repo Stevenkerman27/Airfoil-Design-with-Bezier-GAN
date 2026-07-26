@@ -4,11 +4,19 @@ from cst import (
     build_bernstein_basis,
     bounded_cst_exponent,
     decode_split_surface_cst,
+    trailing_edge_crossing_loss,
     split_surface_t_values,
 )
 
 class CSTDecoderLayer(nn.Module):
-    def __init__(self, shape_coefficient_count, num_output_points, point_density_beta):
+    def __init__(
+        self,
+        shape_coefficient_count,
+        num_output_points,
+        point_density_beta,
+        trailing_edge_crossing_point_count,
+        trailing_edge_crossing_te_weight,
+    ):
         super().__init__()
         if shape_coefficient_count < 2:
             raise ValueError(
@@ -36,6 +44,43 @@ class CSTDecoderLayer(nn.Module):
             'lower_basis',
             build_bernstein_basis(lower_x, shape_coefficient_count),
         )
+        if trailing_edge_crossing_point_count < 1:
+            raise ValueError(
+                'gan_trailing_edge_crossing_point_count must be at least 1, '
+                f'got {trailing_edge_crossing_point_count}'
+            )
+        if trailing_edge_crossing_point_count > upper_x.numel():
+            raise ValueError(
+                'gan_trailing_edge_crossing_point_count exceeds upper-surface '
+                f'point count {upper_x.numel()}: {trailing_edge_crossing_point_count}'
+            )
+        if trailing_edge_crossing_te_weight <= 0.0:
+            raise ValueError(
+                'gan_trailing_edge_crossing_te_weight must be positive, '
+                f'got {trailing_edge_crossing_te_weight}'
+            )
+        # ``upper_x`` is ordered from the trailing edge (1) to the leading
+        # edge (0), so the first sample receives the configured endpoint weight.
+        trailing_edge_x = upper_x[:trailing_edge_crossing_point_count]
+        self.register_buffer(
+            'trailing_edge_crossing_basis',
+            build_bernstein_basis(trailing_edge_x, shape_coefficient_count),
+            persistent=False,
+        )
+        self.register_buffer(
+            'trailing_edge_crossing_x',
+            trailing_edge_x,
+            persistent=False,
+        )
+        self.register_buffer(
+            'trailing_edge_crossing_weights',
+            torch.linspace(
+                trailing_edge_crossing_te_weight,
+                0.0,
+                trailing_edge_crossing_point_count,
+            ),
+            persistent=False,
+        )
 
     def forward(
         self,
@@ -58,6 +103,28 @@ class CSTDecoderLayer(nn.Module):
             n1,
             n2,
         )
+
+    def trailing_edge_crossing_loss(
+        self,
+        upper_coefficients,
+        lower_coefficients,
+        upper_te_y,
+        lower_te_y,
+        n1,
+        n2,
+    ):
+        return trailing_edge_crossing_loss(
+            self.trailing_edge_crossing_basis,
+            self.trailing_edge_crossing_x,
+            self.trailing_edge_crossing_weights,
+            upper_coefficients,
+            lower_coefficients,
+            upper_te_y,
+            lower_te_y,
+            n1,
+            n2,
+        )
+
 
 class Generator(nn.Module):
     def __init__(self, config):
@@ -88,6 +155,8 @@ class Generator(nn.Module):
             self.shape_coefficient_count,
             config['num_output_points'],
             config['point_density_beta'],
+            config['gan_trailing_edge_crossing_point_count'],
+            config['gan_trailing_edge_crossing_te_weight'],
         )
 
         coord_norm = torch.load("model/coord_norm.pt", map_location='cpu', weights_only=True)
@@ -152,7 +221,7 @@ class Generator(nn.Module):
         normalized_y = (physical_coordinates[..., 1] - self.coord_y_min) / y_range
         return torch.stack([normalized_x, normalized_y], dim=-1)
 
-    def forward(self, noise, cond):
+    def _generate(self, noise, cond):
         x = torch.cat([noise, cond], dim=1)
         x = self.fc_blocks(x)
         parameters = self.out_layer(x)
@@ -161,7 +230,17 @@ class Generator(nn.Module):
             *decoded_parameters,
         )
         curve = self.normalize_coordinates(physical_curve)
-        return curve.view(curve.size(0), -1) # Flatten to (Batch, M*2)
+        return curve.view(curve.size(0), -1), decoded_parameters
+
+    def forward(self, noise, cond):
+        curve, _ = self._generate(noise, cond)
+        return curve
+
+    def generate_with_trailing_edge_crossing_loss(self, noise, cond):
+        curve, decoded_parameters = self._generate(noise, cond)
+        crossing_loss = self.cst_layer.trailing_edge_crossing_loss(*decoded_parameters)
+        return curve, crossing_loss
+
 
 class Discriminator(nn.Module):
     def __init__(self, config):

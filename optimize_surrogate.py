@@ -1,10 +1,8 @@
 import argparse
 import copy
-import os
-
 import optuna
-import yaml
 
+from artifact_io import save_yaml
 from train_surrogate import load_config, run_cross_validation
 
 
@@ -12,6 +10,7 @@ OPTUNA_CONFIG_KEY = 'optuna'
 SEARCH_SPACE_KEY = 'search_space'
 LOG_SCALE = 'log'
 LINEAR_SCALE = 'linear'
+OPTUNA_BEST_PARAMS_PATH = 'reports/surrogate/surrogate_optuna_best.yaml'
 
 
 def build_pruner(optuna_config):
@@ -43,14 +42,12 @@ def apply_trial_params(config, trial):
 
 
 def save_best_result(path, study):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
     result = {
         'best_value': study.best_value,
         'best_params': study.best_params,
         'best_trial_number': study.best_trial.number,
     }
-    with open(path, 'w', encoding='utf-8') as f:
-        yaml.safe_dump(result, f, allow_unicode=True, sort_keys=False)
+    save_yaml(path, result)
 
 
 def run_optimization(config_path, n_trials_override=None):
@@ -76,10 +73,10 @@ def run_optimization(config_path, n_trials_override=None):
         return metrics['cv_loss_mean']
 
     study.optimize(objective, n_trials=n_trials)
-    save_best_result(optuna_config['best_params_path'], study)
+    save_best_result(OPTUNA_BEST_PARAMS_PATH, study)
     print(f"Best trial: {study.best_trial.number}")
     print(f"Best cross-validation loss: {study.best_value:.6f}")
-    print(f"Saved best Optuna params to {optuna_config['best_params_path']}")
+    print(f'Saved best Optuna params to {OPTUNA_BEST_PARAMS_PATH}')
     return study
 
 

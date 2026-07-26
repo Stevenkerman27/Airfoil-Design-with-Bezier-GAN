@@ -5,10 +5,12 @@ import os
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+from artifact_io import save_report_figure
 import torch
 
 from model import AerodynamicSurrogate
-from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
+from surrogate_split import load_cross_validation_manifest
 from train_surrogate import (
     AirfoilSurrogateDataset,
     build_weighted_mse_loss,
@@ -18,7 +20,8 @@ from train_surrogate import (
 )
 
 
-LR_RANGE_PLOT_PATH = 'model/surrogate_lr_range.png'
+LR_RANGE_PLOT_PATH = 'reports/surrogate/surrogate_lr_range.png'
+SURROGATE_DATASET_PATH = 'model/airfoil_dataset.pt'
 LR_RANGE_CONFIG_KEYS = [
     'surrogate_lr_range_start',
     'surrogate_lr_range_end',
@@ -101,7 +104,7 @@ def plot_lr_range(records_by_run, path):
     plt.legend()
     plt.tight_layout()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    plt.savefig(path)
+    save_report_figure(plt.gcf(), path)
     plt.close()
 
 
@@ -172,8 +175,7 @@ def run_lr_range_test(config_path):
     config = load_config(config_path)
     validate_lr_range_config(config)
     device = resolve_device(config)
-    dataset_config = resolve_surrogate_dataset_config(config)
-    raw_data = torch.load(dataset_config['data_path'], weights_only=True)
+    raw_data = torch.load(SURROGATE_DATASET_PATH, weights_only=True)
     manifest = load_cross_validation_manifest(raw_data, config)
     dataset, _ = AirfoilSurrogateDataset.from_training_indices(
         raw_data,

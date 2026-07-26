@@ -11,17 +11,21 @@ import torch.autograd as autograd
 import yaml
 from torch.utils.data import DataLoader
 
+from artifact_io import report_generated_at, save_report_figure
 from dataset import AirfoilDataset
+from gan_conditions import GAN_LABEL_ORDER
 from model import AerodynamicSurrogate, Discriminator, Generator
 from plot_gan_metrics import METRIC_COLUMNS, plot_gan_metrics
-from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
+from surrogate_split import load_cross_validation_manifest
 from utils import normalize_airfoil_chord_coordinates
 
 
 SURROGATE_TARGET_ORDER = ['CM', 'CL', 'CD']
-GAN_LABEL_ORDER = ['alpha', 'Re', 'CL', 'CM']
-GAN_METRICS_PATH = 'model/gan_training_metrics.csv'
-GAN_LOSS_PLOT_PATH = 'model/loss_curve.png'
+GAN_METRICS_PATH = 'reports/gan/gan_training_metrics.csv'
+GAN_LOSS_PLOT_PATH = 'reports/gan/loss_curve.png'
+SURROGATE_DATASET_PATH = 'model/airfoil_dataset.pt'
+SURROGATE_NORM_PATH = 'model/surrogate_airfoil_group_norm.pt'
+SURROGATE_BEST_MODEL_PATH = 'model/surrogate_airfoil_group_best.pt'
 
 
 def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, device):
@@ -53,14 +57,18 @@ def compute_gradient_penalty(discriminator, real_samples, fake_samples, conds, d
 
 
 def load_frozen_surrogate(config, device):
-    dataset_config = resolve_surrogate_dataset_config(config)
     model = AerodynamicSurrogate(config).to(device)
     checkpoint = torch.load(
-        dataset_config['best_model_path'],
+        SURROGATE_BEST_MODEL_PATH,
         map_location=device,
         weights_only=True,
     )
-    if checkpoint['selection_policy'] != 'fixed_final_epoch':
+    supported_selection_policies = {
+        'fixed_final_epoch',
+        'generated_validation_weighted_mse',
+        'alternating_fixed_epoch',
+    }
+    if checkpoint['selection_policy'] not in supported_selection_policies:
         raise ValueError(
             f"Unexpected surrogate checkpoint selection policy: "
             f"{checkpoint['selection_policy']}"
@@ -73,10 +81,9 @@ def load_frozen_surrogate(config, device):
 
 
 def load_gan_auxiliary_stats(config, device):
-    dataset_config = resolve_surrogate_dataset_config(config)
     gan_cond_norm = torch.load('model/cond_norm.pt', map_location=device, weights_only=True)
     gan_coord_norm = torch.load('model/coord_norm.pt', map_location=device, weights_only=True)
-    surrogate_norm = torch.load(dataset_config['norm_path'], map_location=device, weights_only=True)
+    surrogate_norm = torch.load(SURROGATE_NORM_PATH, map_location=device, weights_only=True)
 
     if surrogate_norm['source_split'] != 'development':
         raise ValueError(
@@ -100,8 +107,6 @@ def load_gan_auxiliary_stats(config, device):
             'y_max': gan_coord_norm['y_max'].to(device),
         },
         'surrogate_coord': {
-            'x_min': surrogate_norm['coord']['x_min'].to(device),
-            'x_max': surrogate_norm['coord']['x_max'].to(device),
             'y_min': surrogate_norm['coord']['y_min'].to(device),
             'y_max': surrogate_norm['coord']['y_max'].to(device),
         },
@@ -172,11 +177,26 @@ def denormalize_gan_coords(coords, coord_stats, num_points):
     return torch.stack([x_values, y_values], dim=2)
 
 
+def normalize_gan_coords(physical_coords, coord_stats):
+    if physical_coords.ndim != 3 or physical_coords.size(2) != 2:
+        raise ValueError(
+            f'physical_coords must have shape (batch, points, 2), got '
+            f'{tuple(physical_coords.shape)}'
+        )
+    x_values = (
+        physical_coords[:, :, 0] - coord_stats['x_min']
+    ) / (coord_stats['x_max'] - coord_stats['x_min'] + 1e-8)
+    y_values = (
+        physical_coords[:, :, 1] - coord_stats['y_min']
+    ) / (coord_stats['y_max'] - coord_stats['y_min'] + 1e-8)
+    return torch.stack([x_values, y_values], dim=2).view(physical_coords.size(0), -1)
+
+
 def normalize_surrogate_coords(physical_coords, coord_stats):
     chord_normalized_coords = normalize_airfoil_chord_coordinates(physical_coords)
-    x_values = (chord_normalized_coords[:, :, 0] - coord_stats['x_min']) / (coord_stats['x_max'] - coord_stats['x_min'] + 1e-8)
     y_values = (chord_normalized_coords[:, :, 1] - coord_stats['y_min']) / (coord_stats['y_max'] - coord_stats['y_min'] + 1e-8)
-    return torch.stack([x_values, y_values], dim=2).view(physical_coords.size(0), -1)
+    surrogate_coords = torch.stack([chord_normalized_coords[:, :, 0], y_values], dim=2)
+    return surrogate_coords.view(physical_coords.size(0), -1)
 
 
 def denormalize_gan_conditions(norm_conds, stats):
@@ -239,6 +259,7 @@ def init_metrics_csv(path, append):
 
 
 def append_metrics_csv(path, metrics):
+    metrics = {'generated_at': report_generated_at(), **metrics}
     with open(path, 'a', encoding='utf-8', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=METRIC_COLUMNS)
         writer.writerow(metrics)
@@ -313,9 +334,12 @@ def run_lr_range_test(config, dataloader, device):
         if i % n_critic == 0:
             optimizer_G.zero_grad()
             z_gen = torch.randn(batch_size, config['noise_dimension']).to(device)
-            fake_foil_gen = generator(z_gen, conds)
+            fake_foil_gen, crossing_loss = generator.generate_with_trailing_edge_crossing_loss(
+                z_gen,
+                conds,
+            )
             fake_validity_gen = discriminator(fake_foil_gen, conds)
-            g_loss = -torch.mean(fake_validity_gen)
+            g_loss = -torch.mean(fake_validity_gen) + crossing_loss
             g_loss.backward()
             optimizer_G.step()
             current_g_loss_val = g_loss.item()
@@ -343,8 +367,9 @@ def run_lr_range_test(config, dataloader, device):
     plt.title('LR Range Test')
     plt.legend()
     plt.grid(True, which="both", ls="-", alpha=0.5)
-    plot_path = 'model/lr_range_test.png'
-    plt.savefig(plot_path)
+    plot_path = 'reports/gan/lr_range_test.png'
+    os.makedirs(os.path.dirname(plot_path), exist_ok=True)
+    save_report_figure(plt.gcf(), plot_path)
     plt.close()
 
     while True:
@@ -362,7 +387,6 @@ def run_lr_range_test(config, dataloader, device):
 def train():
     with open("config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
-
     device_cfg = config["device"]
     if device_cfg.lower() == "cuda" and torch.cuda.is_available():
         device = torch.device("cuda")
@@ -375,11 +399,10 @@ def train():
     print(f"Using device: {device}")
 
     batch_size = config['batch_size']
-    dataset_config = resolve_surrogate_dataset_config(config)
-    raw_data = torch.load(dataset_config['data_path'], weights_only=True)
+    raw_data = torch.load(SURROGATE_DATASET_PATH, weights_only=True)
     manifest = load_cross_validation_manifest(raw_data, config)
     dataset = AirfoilDataset(
-        dataset_config['data_path'],
+        SURROGATE_DATASET_PATH,
         manifest['development_indices'],
         'model/cond_norm.pt',
         'model/coord_norm.pt',
@@ -420,6 +443,7 @@ def train():
         epoch_surrogate_loss = 0.0
         epoch_surrogate_cm_loss = 0.0
         epoch_surrogate_cl_loss = 0.0
+        epoch_crossing_loss = 0.0
         epoch_weighted_adv_loss = 0.0
         epoch_weighted_surrogate_loss = 0.0
         epoch_real_score = 0.0
@@ -463,7 +487,10 @@ def train():
                 optimizer_G.zero_grad()
 
                 z_gen = torch.randn(batch_size, config['noise_dimension']).to(device)
-                fake_foil = generator(z_gen, conds)
+                fake_foil, crossing_loss = generator.generate_with_trailing_edge_crossing_loss(
+                    z_gen,
+                    conds,
+                )
 
                 fake_validity_gen = discriminator(fake_foil, conds)
                 g_adv_loss = -torch.mean(fake_validity_gen)
@@ -483,6 +510,7 @@ def train():
                 g_loss = (
                     loss_weights['adv'] * g_adv_loss
                     + loss_weights['surrogate'] * surrogate_loss
+                    + crossing_loss
                 )
                 g_loss.backward()
                 optimizer_G.step()
@@ -492,6 +520,7 @@ def train():
                 epoch_surrogate_loss += surrogate_loss.item()
                 epoch_surrogate_cm_loss += surrogate_cm_loss.item()
                 epoch_surrogate_cl_loss += surrogate_cl_loss.item()
+                epoch_crossing_loss += crossing_loss.item()
                 epoch_weighted_adv_loss += (loss_weights['adv'] * g_adv_loss).item()
                 epoch_weighted_surrogate_loss += (loss_weights['surrogate'] * surrogate_loss).item()
                 g_batch_count += 1
@@ -502,6 +531,7 @@ def train():
         avg_surrogate_loss = epoch_surrogate_loss / g_batch_count if g_batch_count > 0 else 0.0
         avg_surrogate_cm_loss = epoch_surrogate_cm_loss / g_batch_count if g_batch_count > 0 else 0.0
         avg_surrogate_cl_loss = epoch_surrogate_cl_loss / g_batch_count if g_batch_count > 0 else 0.0
+        avg_crossing_loss = epoch_crossing_loss / g_batch_count if g_batch_count > 0 else 0.0
         avg_weighted_adv_loss = epoch_weighted_adv_loss / g_batch_count if g_batch_count > 0 else 0.0
         avg_weighted_surrogate_loss = epoch_weighted_surrogate_loss / g_batch_count if g_batch_count > 0 else 0.0
         avg_real_score = epoch_real_score / batch_count
@@ -519,6 +549,7 @@ def train():
                 'surrogate_cm_raw': avg_surrogate_cm_loss,
                 'surrogate_cl_raw': avg_surrogate_cl_loss,
                 'surrogate_raw': avg_surrogate_loss,
+                'trailing_edge_crossing_raw': avg_crossing_loss,
                 'g_adv_weighted': avg_weighted_adv_loss,
                 'surrogate_weighted': avg_weighted_surrogate_loss,
                 'real_score': avg_real_score,
@@ -535,6 +566,7 @@ def train():
                 f"[D loss: {avg_d_loss:.4f}] [G loss: {avg_g_loss:.4f}] "
                 f"[G adv: {avg_g_adv_loss:.4f}] [Surr: {avg_surrogate_loss:.4f}] "
                 f"[CM: {avg_surrogate_cm_loss:.4f}] [CL: {avg_surrogate_cl_loss:.4f}] "
+                f"[Cross: {avg_crossing_loss:.6f}] "
                 f"[W adv: {loss_weights['adv']:.3f}] "
                 f"[W surr: {loss_weights['surrogate']:.3f}]"
             )

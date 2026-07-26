@@ -9,6 +9,8 @@ import numpy as np
 import torch
 import yaml
 
+from artifact_io import save_report_figure
+
 
 PLOT_CONFIG_KEY = 'dataset_aerodynamic_coefficient_plot'
 AXIS_PADDING_FRACTION = 0.05
@@ -62,7 +64,7 @@ def plot_coefficients(plot_config):
             selected_masks[(alpha_value, re_value)] = mask
 
     combined_mask = np.logical_or.reduce(list(selected_masks.values()))
-    cm_limits = Normalize(vmin=float(np.min(cm[combined_mask])), vmax=float(np.max(cm[combined_mask])))
+    cd_limits = Normalize(vmin=float(np.min(cd[combined_mask])), vmax=float(np.max(cd[combined_mask])))
 
     fig, axes = plt.subplots(
         len(alpha_values), len(re_values), figsize=(15, 12)
@@ -75,27 +77,27 @@ def plot_coefficients(plot_config):
             axis = axes[row, column]
             mask = selected_masks[(alpha_value, re_value)]
             scatter = axis.scatter(
-                cd[mask], cl[mask], c=cm[mask], cmap='RdBu_r', norm=cm_limits,
+                cm[mask], cl[mask], c=cd[mask], cmap='viridis', norm=cd_limits,
                 s=14, alpha=0.8, linewidths=0,
             )
             axis.set_title(f'alpha = {alpha_value:g} deg, Re = {re_value:,.0f}')
             axis.grid(True, linestyle='--', alpha=0.35)
-            axis.set_xlim(padded_limits(cd[mask]))
+            axis.set_xlim(padded_limits(cm[mask]))
             axis.set_ylim(padded_limits(cl[mask]))
             if row == len(alpha_values) - 1:
-                axis.set_xlabel('Cd')
+                axis.set_xlabel('Cm')
             if column == 0:
                 axis.set_ylabel('Cl')
 
     fig.suptitle('Original Dataset Aerodynamic Coefficients', y=0.995)
     fig.subplots_adjust(left=0.08, right=0.86, bottom=0.08, top=0.94, wspace=0.15, hspace=0.2)
-    fig.colorbar(scatter, ax=axes.ravel().tolist(), label='Cm', pad=0.03)
+    fig.colorbar(scatter, ax=axes.ravel().tolist(), label='Cd', pad=0.03)
 
-    output_path = 'model/original_aerodynamic_coefficients_3x3.png'
-    output_directory = os.path.dirname('output_path')
+    output_path = 'reports/dataset/original_aerodynamic_coefficients_3x3.png'
+    output_directory = os.path.dirname(output_path)
     if output_directory:
         os.makedirs(output_directory, exist_ok=True)
-    fig.savefig(output_path, dpi=180, bbox_inches='tight')
+    save_report_figure(fig, output_path, dpi=180, bbox_inches='tight')
     plt.close(fig)
     print(f'Plot saved to {output_path}')
 

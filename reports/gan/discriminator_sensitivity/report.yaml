@@ -1,0 +1,43 @@
+generated_at: '2026-07-26T19:11:37+08:00'
+source: real
+checkpoint: model/gan_final.pt
+device: cuda
+sample_count: 5
+seed: 20260704
+gradient_definition: d D(coords, normalized_condition) / d coords
+coordinate_ranges:
+  x: 1.0
+  y: 0.29163500666618347
+mean_csv_path: reports/gan/discriminator_sensitivity\mean.csv
+mean_plot_path: reports/gan/discriminator_sensitivity\mean.png
+samples:
+- sample_index: 0
+  dataset_index: 62617
+  critic_score: -0.05854874849319458
+  max_physical_sensitivity: 0.23176637291908264
+  csv_path: reports/gan/discriminator_sensitivity\real_000.csv
+  plot_path: reports/gan/discriminator_sensitivity\real_000.png
+- sample_index: 1
+  dataset_index: 30861
+  critic_score: -0.062336504459381104
+  max_physical_sensitivity: 0.21462303400039673
+  csv_path: reports/gan/discriminator_sensitivity\real_001.csv
+  plot_path: reports/gan/discriminator_sensitivity\real_001.png
+- sample_index: 2
+  dataset_index: 54670
+  critic_score: -0.0910978615283966
+  max_physical_sensitivity: 0.21744517982006073
+  csv_path: reports/gan/discriminator_sensitivity\real_002.csv
+  plot_path: reports/gan/discriminator_sensitivity\real_002.png
+- sample_index: 3
+  dataset_index: 69324
+  critic_score: -0.026263952255249023
+  max_physical_sensitivity: 0.2236926257610321
+  csv_path: reports/gan/discriminator_sensitivity\real_003.csv
+  plot_path: reports/gan/discriminator_sensitivity\real_003.png
+- sample_index: 4
+  dataset_index: 61307
+  critic_score: -0.122934490442276
+  max_physical_sensitivity: 0.22684021294116974
+  csv_path: reports/gan/discriminator_sensitivity\real_004.csv
+  plot_path: reports/gan/discriminator_sensitivity\real_004.png

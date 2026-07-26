@@ -1,4 +1,3 @@
-import os
 import glob
 import os
 
@@ -6,9 +5,16 @@ import torch
 import yaml
 import numpy as np
 import matplotlib.pyplot as plt
-from surrogate_split import build_cross_validation_manifest, resolve_surrogate_dataset_config
+from surrogate_split import build_cross_validation_manifest
+from artifact_io import save_report_figure
 
-def plot_label_statistics(data_list, output_path="model/label_statistics.png"):
+
+PROCESSED_AIRFOIL_DIRECTORY = os.path.join('foildata', 'processed_foil')
+POLAR_DIRECTORY = os.path.join('foildata', 'polars')
+SURROGATE_DATASET_PATH = 'model/airfoil_dataset.pt'
+SURROGATE_SPLIT_PATH = 'model/surrogate_airfoil_group_cv_split.pt'
+
+def plot_label_statistics(data_list, output_path="reports/dataset/label_statistics.png"):
     """
     绘制 CL, CM, CD 的箱线图，并叠加所有原始数据点。
     """
@@ -42,7 +48,7 @@ def plot_label_statistics(data_list, output_path="model/label_statistics.png"):
         
     plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    plt.savefig(output_path)
+    save_report_figure(plt.gcf(), output_path)
     print(f"包含所有数据点的统计图已保存至: {output_path}")
 
 def prepare_dataset(processed_foil_dir, polars_dir, output_file, max_cd, config):
@@ -145,11 +151,9 @@ def prepare_dataset(processed_foil_dir, polars_dir, output_file, max_cd, config)
     
     print(f"正在保存至 {output_file} ...")
     torch.save(data_list, output_file)
-    dataset_config = resolve_surrogate_dataset_config(config)
-    if dataset_config['data_path'] != output_file:
+    if SURROGATE_DATASET_PATH != output_file:
         raise ValueError(
-            f"surrogate_dataset.data_path must equal {output_file}, "
-            f"got {dataset_config['data_path']}"
+            f'output_file must equal {SURROGATE_DATASET_PATH}, got {output_file}'
         )
     manifest = build_cross_validation_manifest(
         data_list,
@@ -157,7 +161,7 @@ def prepare_dataset(processed_foil_dir, polars_dir, output_file, max_cd, config)
         config['surrogate_cv_fold_count'],
         config['surrogate_seed'],
     )
-    split_path = dataset_config['split_path']
+    split_path = SURROGATE_SPLIT_PATH
     torch.save(manifest, split_path)
     print(f"已保存代理模型五折划分清单至 {split_path}")
     fold_sizes = [len(indices) for indices in manifest['fold_indices']]
@@ -179,9 +183,8 @@ if __name__ == '__main__':
             print(f"将过滤 CD > {max_cd} 的数据")
 
     # 按照当前目录结构设置路径
-    processed_dir = os.path.join("foildata", "processed_foil")
-    polars_dir = os.path.join("foildata", "polars")
-    selected_dataset_config = resolve_surrogate_dataset_config(config)
-    out_file = selected_dataset_config['data_path']
+    processed_dir = PROCESSED_AIRFOIL_DIRECTORY
+    polars_dir = POLAR_DIRECTORY
+    out_file = SURROGATE_DATASET_PATH
 
     prepare_dataset(processed_dir, polars_dir, out_file, max_cd=max_cd, config=config)

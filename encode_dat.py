@@ -8,8 +8,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import torch
 import torch.optim as optim
-import yaml
-
+from artifact_io import save_report_figure, save_yaml
 from cst import (
     bounded_cst_exponent,
     build_bernstein_basis,
@@ -20,6 +19,10 @@ from train_surrogate import load_config, resolve_device
 
 
 CST_ENCODE_CONFIG_KEY = 'cst_encode'
+CST_INPUT_DIRECTORY = 'foildata/processed_foil'
+CST_ENCODED_OUTPUT_PATH = 'model/cst_encoded_airfoils.pt'
+CST_REPORT_PATH = 'reports/cst/cst_encode_report.yaml'
+CST_WORST_CASE_DIRECTORY = 'reports/cst/cst_encode_worst10'
 
 
 def load_dat(file_path):
@@ -272,7 +275,7 @@ def visualize_cst_result(target_points, curve_points, airfoil_name, mae_y, save_
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.legend()
     plt.title(f'{airfoil_name} CST reconstruction, MAE_y={mae_y:.8f}')
-    plt.savefig(save_path, dpi=200, bbox_inches='tight')
+    save_report_figure(plt.gcf(), save_path, dpi=200, bbox_inches='tight')
     plt.close()
 
 
@@ -280,9 +283,9 @@ def run_cst_encoding(config_path):
     config = load_config(config_path)
     validate_cst_configuration(config)
     encode_config = config[CST_ENCODE_CONFIG_KEY]
-    airfoil_paths = sorted(Path(encode_config['data_dir']).glob('*.dat'))
+    airfoil_paths = sorted(Path(CST_INPUT_DIRECTORY).glob('*.dat'))
     if len(airfoil_paths) == 0:
-        raise ValueError(f"No .dat files found in {encode_config['data_dir']}")
+        raise ValueError(f'No .dat files found in {CST_INPUT_DIRECTORY}')
     device = resolve_device(config)
     batch_results = []
     for start in range(0, len(airfoil_paths), encode_config['batch_size']):
@@ -316,7 +319,7 @@ def run_cst_encoding(config_path):
             'max_point_error_per_airfoil',
         ]
     }
-    encoded_path = Path(encode_config['encoded_path'])
+    encoded_path = Path(CST_ENCODED_OUTPUT_PATH)
     encoded_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
@@ -332,7 +335,7 @@ def run_cst_encoding(config_path):
 
     ranked_indices = torch.argsort(all_metrics['mae_y_per_airfoil'], descending=True)
     worst_count = min(encode_config['worst_case_count'], len(airfoil_paths))
-    worst_dir = Path(encode_config['worst_case_dir'])
+    worst_dir = Path(CST_WORST_CASE_DIRECTORY)
     if worst_dir.exists():
         shutil.rmtree(worst_dir)
     worst_dir.mkdir(parents=True, exist_ok=True)
@@ -371,10 +374,8 @@ def run_cst_encoding(config_path):
         },
         'worst_airfoils': worst_airfoils,
     }
-    report_path = Path(encode_config['report_path'])
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(report_path, 'w', encoding='utf-8') as f:
-        yaml.safe_dump(report, f, allow_unicode=True, sort_keys=False)
+    report_path = Path(CST_REPORT_PATH)
+    save_yaml(str(report_path), report)
     print(f'CST parameters and reconstructions saved to {encoded_path}')
     print(f'CST report saved to {report_path}')
     return report

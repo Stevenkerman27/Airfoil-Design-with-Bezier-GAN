@@ -1,11 +1,9 @@
 import argparse
-import os
-
 import torch
-import yaml
 
+from artifact_io import save_yaml
 from model import AerodynamicSurrogate
-from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
+from surrogate_split import load_cross_validation_manifest
 from train_surrogate import (
     AirfoilSurrogateDataset,
     SURROGATE_TARGET_NAMES,
@@ -18,15 +16,23 @@ from train_surrogate import (
 
 
 EVAL_PLOT_PATHS = {
-    'CL': 'model/surrogate_test_cl.png',
-    'CD': 'model/surrogate_test_cd.png',
-    'CM': 'model/surrogate_test_cm.png',
+    'CL': 'reports/surrogate/surrogate_test_cl.png',
+    'CD': 'reports/surrogate/surrogate_test_cd.png',
+    'CM': 'reports/surrogate/surrogate_test_cm.png',
 }
+SURROGATE_DATASET_PATH = 'model/airfoil_dataset.pt'
+SURROGATE_NORM_PATH = 'model/surrogate_airfoil_group_norm.pt'
+SURROGATE_BEST_MODEL_PATH = 'model/surrogate_airfoil_group_best.pt'
 
 
 def load_surrogate_checkpoint(model, checkpoint_path, device):
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    if checkpoint['selection_policy'] != 'fixed_final_epoch':
+    supported_selection_policies = {
+        'fixed_final_epoch',
+        'generated_validation_weighted_mse',
+        'alternating_fixed_epoch',
+    }
+    if checkpoint['selection_policy'] not in supported_selection_policies:
         raise ValueError(
             f"Unexpected surrogate checkpoint selection policy: {checkpoint['selection_policy']}"
         )
@@ -59,22 +65,19 @@ def compute_target_metrics(predictions, targets, target_names):
 
 
 def save_metrics(path, metrics):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as file:
-        yaml.safe_dump(metrics, file, allow_unicode=True, sort_keys=False)
+    save_yaml(path, metrics)
 
 
 def run_evaluation(config_path, model_path=None, metrics_path=None):
     config = load_config(config_path)
     device = resolve_device(config)
-    dataset_config = resolve_surrogate_dataset_config(config)
-    raw_data = torch.load(dataset_config['data_path'], weights_only=True)
+    raw_data = torch.load(SURROGATE_DATASET_PATH, weights_only=True)
     manifest = load_cross_validation_manifest(raw_data, config)
     dataset = AirfoilSurrogateDataset.from_norm_path(
-        raw_data, dataset_config['norm_path'], device
+        raw_data, SURROGATE_NORM_PATH, device
     )
     test_indices = dataset.prepare_indices(manifest['test_indices'])
-    checkpoint_path = model_path if model_path is not None else dataset_config['best_model_path']
+    checkpoint_path = model_path if model_path is not None else SURROGATE_BEST_MODEL_PATH
     model = AerodynamicSurrogate(config).to(device)
     checkpoint = load_surrogate_checkpoint(model, checkpoint_path, device)
     result = evaluate(
@@ -103,7 +106,7 @@ def run_evaluation(config_path, model_path=None, metrics_path=None):
             target_name,
             path,
         )
-    output_path = metrics_path or 'model/surrogate_test_metrics.yaml'
+    output_path = metrics_path or 'reports/surrogate/surrogate_test_metrics.yaml'
     save_metrics(output_path, metrics)
     print(f"Independent test sample count: {metrics['sample_count']}")
     print(f"Independent test loss: {metrics['eval_loss']:.6f}")

@@ -45,7 +45,15 @@ y_surface(x) = C(x) * S_surface(x) + x * delta_z_surface
 
 `L_surr = mean([w_CM * MSE_CM, w_CL * MSE_CL])`
 
-`[w_CM, w_CL]` 由 `gan_surrogate_target_loss_weights` 提供。总生成器损失为 `L_G = a(epoch) * L_adv + s(epoch) * L_surr`；`gan_aux_start_epoch` 前仅使用对抗项，之后在 `gan_aux_ramp_epochs` 内将对抗权重过渡到 `gan_adv_loss_final_weight`，并将辅助权重升至 `gan_surrogate_loss_weight`。
+`[w_CM, w_CL]` 由 `gan_surrogate_target_loss_weights` 提供。几何正则化采用论文的后缘端点交叉项。对第 `s` 个翼型，CST 上、下表面的后缘项分别为闭合曲线首尾端点的纵坐标 `y_upper_TE` 和 `y_lower_TE`，定义：
+
+令 `x_1, ..., x_N` 为上表面输出采样中从后缘向弦内数的 `N = gan_trailing_edge_crossing_point_count` 个横坐标，重新在两表面共同的这些位置求值。`d_i = ReLU(y_lower(x_i) - y_upper(x_i))`，并令线性权重 `w_N = 0`、`w_1 = gan_trailing_edge_crossing_te_weight`，则：
+
+`L_TE = mean_s(sum(i=1..N, w_i * d_i))`
+
+当前 `N=3`。最后缘端点的权重是 `gan_trailing_edge_crossing_te_weight`，最靠内的第 `N` 组权重为 `0`，中间组线性插值。因此第三对点仅保留为采样边界，不贡献损失或梯度。该项只在相应组的下表面高于上表面时产生梯度；所有有效权重的组排序正确后损失和梯度均为零，不要求最小后缘厚度，也不在整条弦向上比较上下表面。
+
+总生成器损失为 `L_G = a(epoch) * L_adv + s(epoch) * L_surr + L_TE`。几何项从第 0 个 epoch 起保持恒定权重；`gan_aux_start_epoch` 前气动辅助项为零，之后在 `gan_aux_ramp_epochs` 内将对抗权重过渡到 `gan_adv_loss_final_weight`，并将气动辅助权重升至 `gan_surrogate_loss_weight`。
 
 ## 训练、评估与产物
 
@@ -61,4 +69,10 @@ y_surface(x) = C(x) * S_surface(x) + x * delta_z_surface
 
 `weighted_error = w_CM * |CM_xfoil - CM_target| + w_CL * |CL_xfoil - CL_target|`
 
-每个条件的热图值为有效样本的平均绝对误差加 `eval_var_weight * variance`。`test_cgan.py` 接收用户给定的 `[alpha, Re, CL, CM]`，报告 XFoil、冻结代理与目标之间的误差。`--development-samples` 默认值为 5，脚本使用 `surrogate_seed` 从划分清单的 `development_indices` 中无放回抽取 N 个真实四维条件，每个条件生成 `NUM_GENERATE` 个翼型；N 大于 0 时该模式覆盖 `--labels`，输出标签附加 `DEV###` 以区分条件。显式指定 `--development-samples 0` 时才使用 `--labels`。
+每个条件的热图值为有效样本的平均绝对误差加 `eval_var_weight * variance`。`test_cgan.py` 接收用户给定的 `[alpha, Re, CL, CM]`，报告 XFoil、冻结代理与目标之间的误差。测试脚本对非负整数目标迎角显式启用 XFoil continuation：从 `0°` 开始以 `1°` 步进至目标迎角，每个迎角最多迭代 50 次，只采用目标迎角的完整 `CL/CD/CM`；总进程超时按迎角计算次数乘以单点超时预算。负迎角或非整数迎角立即报错。其他 `run_xfoil_single` 调用默认仍只计算指定迎角。
+
+`--development-samples` 默认值为 5，脚本使用 `surrogate_seed` 从划分清单的 `development_indices` 中无放回抽取 N 个真实四维条件，每个条件生成 `NUM_GENERATE` 个翼型；N 大于 0 时该模式覆盖 `--labels`，输出标签附加 `DEV###` 以区分条件。显式指定 `--development-samples 0` 时才使用 `--labels`。
+
+## Critic sensitivity diagnostic
+
+`visualize_discriminator_sensitivity.py` differentiates the scalar critic score with respect to every GAN-normalized input coordinate using `autograd.grad(D(coords, c).sum(), coords)`. It reports both this direct discriminator-input gradient and its physical-coordinate form, obtained by dividing `dD/dx_normalized` and `dD/dy_normalized` by the corresponding ranges in `model/coord_norm.pt`. The script samples five development-set real airfoils by default and can instead generate samples for a supplied `[alpha, Re, CL, CM]` condition. Each selected airfoil produces a CSV and a figure showing physical geometry, physical-gradient direction, and both gradient coordinate systems. `mean.csv` and `mean.png` aggregate selected airfoils by ordered point index with equal sample weights; they report both the norm of the mean gradient and the mean of per-sample L2 sensitivity, which are distinct quantities. Normalized and physical derivatives must not be interpreted as interchangeable.

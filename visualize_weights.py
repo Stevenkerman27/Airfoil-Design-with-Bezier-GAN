@@ -3,6 +3,7 @@ import yaml
 import matplotlib.pyplot as plt
 import os
 import argparse
+from artifact_io import save_report_figure
 from model import Discriminator
 
 def visualize_discriminator_conv_weights(model_path=None):
@@ -75,8 +76,9 @@ def visualize_discriminator_conv_weights(model_path=None):
         axes1[i].axis('off')
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig('model/discriminator_conv1_weights.png')
-    print("Saved Layer 1 plot to model/discriminator_conv1_weights.png")
+    os.makedirs('reports/gan', exist_ok=True)
+    save_report_figure(plt.gcf(), 'reports/gan/discriminator_conv1_weights.png')
+    print("Saved Layer 1 plot to reports/gan/discriminator_conv1_weights.png")
 
     # 5. Plot Layer 2 (conv2)
     out_channels2 = weights2.shape[0]
@@ -104,8 +106,8 @@ def visualize_discriminator_conv_weights(model_path=None):
         axes2[i].axis('off')
         
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig('model/discriminator_conv2_weights.png')
-    print("Saved Layer 2 plot to model/discriminator_conv2_weights.png")
+    save_report_figure(plt.gcf(), 'reports/gan/discriminator_conv2_weights.png')
+    print("Saved Layer 2 plot to reports/gan/discriminator_conv2_weights.png")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Visualize Discriminator convolutional weights")

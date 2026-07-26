@@ -7,3 +7,4 @@ docs/
 .pytest_cache/
 coord_seligFmt.zip
 model/airfoil_dataset.pt
+model/surrogate_generated_finetuned_best.pt

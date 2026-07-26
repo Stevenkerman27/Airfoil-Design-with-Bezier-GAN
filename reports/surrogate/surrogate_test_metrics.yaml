@@ -1,0 +1,24 @@
+generated_at: '2026-07-26T13:20:09+08:00'
+split: test
+sample_count: 7138
+model_path: model/surrogate_airfoil_group_best.pt
+training_epoch_count: 60
+selection_policy: fixed_final_epoch
+eval_loss: 0.1679350584745407
+eval_mae: 0.00985779706388712
+target_order:
+- CM
+- CL
+- CD
+per_target_mae:
+  CM: 0.004473092034459114
+  CL: 0.02408599853515625
+  CD: 0.0010142935207113624
+per_target_rmse:
+  CM: 0.006863754708319902
+  CL: 0.03838255628943443
+  CD: 0.001895766705274582
+per_target_r2:
+  CM: 0.9846749901771545
+  CL: 0.9875960946083069
+  CD: 0.9302873611450195

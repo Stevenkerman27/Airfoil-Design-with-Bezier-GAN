@@ -24,12 +24,6 @@ def make_raw_data():
 
 def build_config():
     return {
-        'surrogate_dataset': {
-            'data_path': 'unused.pt',
-            'split_path': 'group_cv.pt',
-            'norm_path': 'norm.pt',
-            'best_model_path': 'best.pt',
-        },
         'surrogate_test_ratio': 0.1,
         'surrogate_cv_fold_count': 5,
         'surrogate_seed': 20260704,

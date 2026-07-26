@@ -4,6 +4,7 @@ import yaml
 import argparse
 from model import Generator, Discriminator
 import numpy as np
+from gan_conditions import load_development_conditions
 from train import (
     GAN_LABEL_ORDER,
     build_surrogate_conditions,
@@ -11,50 +12,10 @@ from train import (
     load_gan_auxiliary_stats,
     normalize_surrogate_coords,
 )
-from surrogate_split import load_cross_validation_manifest, resolve_surrogate_dataset_config
 from utils import calculate_relative_thickness
 from foildata.xfoil import run_xfoil_single
 
 NUM_GENERATE = 5
-
-
-def sample_development_conditions(raw_data, development_indices, count, seed):
-    if not isinstance(count, int) or count <= 0:
-        raise ValueError(f'development sample count must be a positive integer, got {count}')
-    if count > len(development_indices):
-        raise ValueError(
-            f'Requested {count} development conditions, only '
-            f'{len(development_indices)} are available'
-        )
-
-    generator = torch.Generator().manual_seed(seed)
-    selected_positions = torch.randperm(
-        len(development_indices),
-        generator=generator,
-    )[:count].tolist()
-    selected_conditions = []
-    for position in selected_positions:
-        dataset_index = development_indices[position]
-        labels = raw_data[dataset_index]['y'].float()
-        if labels.ndim != 1 or labels.numel() != len(GAN_LABEL_ORDER):
-            raise ValueError(
-                f'Dataset sample {dataset_index} must contain labels in order '
-                f'{GAN_LABEL_ORDER}, got shape {tuple(labels.shape)}'
-            )
-        selected_conditions.append((dataset_index, labels.tolist()))
-    return selected_conditions
-
-
-def load_development_conditions(config, count):
-    dataset_config = resolve_surrogate_dataset_config(config)
-    raw_data = torch.load(dataset_config['data_path'], map_location='cpu', weights_only=True)
-    manifest = load_cross_validation_manifest(raw_data, config)
-    return sample_development_conditions(
-        raw_data,
-        manifest['development_indices'],
-        count,
-        config['surrogate_seed'],
-    )
 
 
 def generate_and_evaluate(model_path, tag, user_label_list, config):
@@ -197,7 +158,13 @@ def generate_and_evaluate(model_path, tag, user_label_list, config):
         thickness = calculate_relative_thickness(airfoil_coords)
         
         # 调用 XFOIL 进行气动分析
-        xfoil_res = run_xfoil_single(airfoil_coords, re_input, alpha_input, return_all=True)
+        xfoil_res = run_xfoil_single(
+            airfoil_coords,
+            re_input,
+            alpha_input,
+            return_all=True,
+            alpha_continuation=True,
+        )
         
         if xfoil_res:
             cl = xfoil_res.get('CL', np.nan)

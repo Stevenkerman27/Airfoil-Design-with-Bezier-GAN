@@ -1,0 +1,821 @@
+generated_at: '2026-07-26T19:43:20+08:00'
+round_index: 0
+existing_to_sampled_ratio:
+- 7
+- 3
+mahalanobis_radius: 1.5
+condition_statistics:
+  label_order:
+  - alpha
+  - Re
+  - CL
+  - CM
+  cl_cm_order:
+  - CL
+  - CM
+  development_sample_count: 64202
+  stratum_count: 54
+  global_CL_CM_correlation: -0.5300671356910243
+  within_stratum_CL_CM_correlation: -0.9520591471102343
+  strata:
+  - alpha: 0.0
+    Re: 100000.0
+    sample_count: 1221
+    CL_mean: 0.24845829606056213
+    CM_mean: -0.05745913088321686
+    CL_std: 0.2265002280473709
+    CM_std: 0.04650169983506203
+    CL_CM_covariance: -0.009668324142694473
+    CL_CM_correlation: -0.9179393380743089
+  - alpha: 0.0
+    Re: 200000.0
+    sample_count: 1219
+    CL_mean: 0.3288968801498413
+    CM_mean: -0.06718990206718445
+    CL_std: 0.22776101529598236
+    CM_std: 0.05090596526861191
+    CL_CM_covariance: -0.01103175524622202
+    CL_CM_correlation: -0.9514731974240073
+  - alpha: 0.0
+    Re: 300000.0
+    sample_count: 1224
+    CL_mean: 0.33493897318840027
+    CM_mean: -0.06773823499679565
+    CL_std: 0.23009949922561646
+    CM_std: 0.05287639796733856
+    CL_CM_covariance: -0.011710483580827713
+    CL_CM_correlation: -0.9624923603690814
+  - alpha: 0.0
+    Re: 400000.0
+    sample_count: 1241
+    CL_mean: 0.33770322799682617
+    CM_mean: -0.0681576132774353
+    CL_std: 0.23440922796726227
+    CM_std: 0.054606277495622635
+    CL_CM_covariance: -0.012373515404760838
+    CL_CM_correlation: -0.9666647379599582
+  - alpha: 0.0
+    Re: 500000.0
+    sample_count: 1232
+    CL_mean: 0.3400961756706238
+    CM_mean: -0.06850908696651459
+    CL_std: 0.23337844014167786
+    CM_std: 0.05458643659949303
+    CL_CM_covariance: -0.012319830246269703
+    CL_CM_correlation: -0.9670734003379258
+  - alpha: 0.0
+    Re: 600000.0
+    sample_count: 1237
+    CL_mean: 0.33632248640060425
+    CM_mean: -0.06775189936161041
+    CL_std: 0.23334480822086334
+    CM_std: 0.05466213822364807
+    CL_CM_covariance: -0.01234771404415369
+    CL_CM_correlation: -0.9680589713287979
+  - alpha: 1.0
+    Re: 100000.0
+    sample_count: 1257
+    CL_mean: 0.3815964162349701
+    CM_mean: -0.06180008128285408
+    CL_std: 0.22331902384757996
+    CM_std: 0.04458044841885567
+    CL_CM_covariance: -0.009042699821293354
+    CL_CM_correlation: -0.9082971017615306
+  - alpha: 1.0
+    Re: 200000.0
+    sample_count: 1244
+    CL_mean: 0.44983792304992676
+    CM_mean: -0.06847234070301056
+    CL_std: 0.22059908509254456
+    CM_std: 0.04962562769651413
+    CL_CM_covariance: -0.010399180464446545
+    CL_CM_correlation: -0.9499252203092389
+  - alpha: 1.0
+    Re: 300000.0
+    sample_count: 1256
+    CL_mean: 0.4540441334247589
+    CM_mean: -0.06876329332590103
+    CL_std: 0.22589822113513947
+    CM_std: 0.052381373941898346
+    CL_CM_covariance: -0.011379355564713478
+    CL_CM_correlation: -0.9616744017940864
+  - alpha: 1.0
+    Re: 400000.0
+    sample_count: 1251
+    CL_mean: 0.44854867458343506
+    CM_mean: -0.06741351634263992
+    CL_std: 0.23047977685928345
+    CM_std: 0.05396188795566559
+    CL_CM_covariance: -0.01201721653342247
+    CL_CM_correlation: -0.9662375161679063
+  - alpha: 1.0
+    Re: 500000.0
+    sample_count: 1258
+    CL_mean: 0.44458627700805664
+    CM_mean: -0.06689292192459106
+    CL_std: 0.22813141345977783
+    CM_std: 0.053585972636938095
+    CL_CM_covariance: -0.011836313642561436
+    CL_CM_correlation: -0.9682341043448957
+  - alpha: 1.0
+    Re: 600000.0
+    sample_count: 1228
+    CL_mean: 0.4449867606163025
+    CM_mean: -0.0669390931725502
+    CL_std: 0.2319924235343933
+    CM_std: 0.054523251950740814
+    CL_CM_covariance: -0.012251744978129864
+    CL_CM_correlation: -0.9685952901568524
+  - alpha: 2.0
+    Re: 100000.0
+    sample_count: 1251
+    CL_mean: 0.5112727880477905
+    CM_mean: -0.06506003439426422
+    CL_std: 0.21196520328521729
+    CM_std: 0.04291146621108055
+    CL_CM_covariance: -0.008162696845829487
+    CL_CM_correlation: -0.8974203497493911
+  - alpha: 2.0
+    Re: 200000.0
+    sample_count: 1264
+    CL_mean: 0.5641148090362549
+    CM_mean: -0.06867959350347519
+    CL_std: 0.21632248163223267
+    CM_std: 0.048779603093862534
+    CL_CM_covariance: -0.010004100389778614
+    CL_CM_correlation: -0.9480648739871266
+  - alpha: 2.0
+    Re: 300000.0
+    sample_count: 1258
+    CL_mean: 0.5643752813339233
+    CM_mean: -0.0681421235203743
+    CL_std: 0.22057898342609406
+    CM_std: 0.05143772438168526
+    CL_CM_covariance: -0.010892546735703945
+    CL_CM_correlation: -0.9600273945177664
+  - alpha: 2.0
+    Re: 400000.0
+    sample_count: 1235
+    CL_mean: 0.5594167113304138
+    CM_mean: -0.06713854521512985
+    CL_std: 0.2259213775396347
+    CM_std: 0.053073860704898834
+    CL_CM_covariance: -0.011564645916223526
+    CL_CM_correlation: -0.9644823482959702
+  - alpha: 2.0
+    Re: 500000.0
+    sample_count: 1229
+    CL_mean: 0.5536507964134216
+    CM_mean: -0.0660087838768959
+    CL_std: 0.2262519747018814
+    CM_std: 0.053625982254743576
+    CL_CM_covariance: -0.01172146387398243
+    CL_CM_correlation: -0.9660822375754599
+  - alpha: 2.0
+    Re: 600000.0
+    sample_count: 1223
+    CL_mean: 0.5541929006576538
+    CM_mean: -0.06638340651988983
+    CL_std: 0.2278234362602234
+    CM_std: 0.05374361202120781
+    CL_CM_covariance: -0.011845388449728489
+    CL_CM_correlation: -0.9674400728151626
+  - alpha: 3.0
+    Re: 100000.0
+    sample_count: 1260
+    CL_mean: 0.6283754110336304
+    CM_mean: -0.06475944817066193
+    CL_std: 0.20231322944164276
+    CM_std: 0.042427387088537216
+    CL_CM_covariance: -0.007654394023120403
+    CL_CM_correlation: -0.8917447637514099
+  - alpha: 3.0
+    Re: 200000.0
+    sample_count: 1280
+    CL_mean: 0.6693464517593384
+    CM_mean: -0.06731797009706497
+    CL_std: 0.21609552204608917
+    CM_std: 0.0490119494497776
+    CL_CM_covariance: -0.010051773861050606
+    CL_CM_correlation: -0.9490626289447093
+  - alpha: 3.0
+    Re: 300000.0
+    sample_count: 1248
+    CL_mean: 0.6724920868873596
+    CM_mean: -0.06758830696344376
+    CL_std: 0.21730069816112518
+    CM_std: 0.05082253739237785
+    CL_CM_covariance: -0.010605361312627792
+    CL_CM_correlation: -0.960302420551346
+  - alpha: 3.0
+    Re: 400000.0
+    sample_count: 1221
+    CL_mean: 0.663770854473114
+    CM_mean: -0.06636682897806168
+    CL_std: 0.22164881229400635
+    CM_std: 0.0522720068693161
+    CL_CM_covariance: -0.011151940561830997
+    CL_CM_correlation: -0.9625336713540903
+  - alpha: 3.0
+    Re: 500000.0
+    sample_count: 1202
+    CL_mean: 0.6597601175308228
+    CM_mean: -0.0656263679265976
+    CL_std: 0.22223415970802307
+    CM_std: 0.052671633660793304
+    CL_CM_covariance: -0.011293095536530018
+    CL_CM_correlation: -0.9647734388721183
+  - alpha: 3.0
+    Re: 600000.0
+    sample_count: 1205
+    CL_mean: 0.6561992764472961
+    CM_mean: -0.06472307443618774
+    CL_std: 0.2273925244808197
+    CM_std: 0.053689293563365936
+    CL_CM_covariance: -0.011799834668636322
+    CL_CM_correlation: -0.9665226550644225
+  - alpha: 4.0
+    Re: 100000.0
+    sample_count: 1244
+    CL_mean: 0.73753821849823
+    CM_mean: -0.06230595335364342
+    CL_std: 0.196543887257576
+    CM_std: 0.04263608157634735
+    CL_CM_covariance: -0.007582519669085741
+    CL_CM_correlation: -0.904850457932069
+  - alpha: 4.0
+    Re: 200000.0
+    sample_count: 1271
+    CL_mean: 0.7713311910629272
+    CM_mean: -0.06545799225568771
+    CL_std: 0.21172207593917847
+    CM_std: 0.04860026389360428
+    CL_CM_covariance: -0.009789066389203072
+    CL_CM_correlation: -0.9513410133365716
+  - alpha: 4.0
+    Re: 300000.0
+    sample_count: 1240
+    CL_mean: 0.7717556357383728
+    CM_mean: -0.06562290340662003
+    CL_std: 0.21221379935741425
+    CM_std: 0.049831148236989975
+    CL_CM_covariance: -0.010141259990632534
+    CL_CM_correlation: -0.9589973667820026
+  - alpha: 4.0
+    Re: 400000.0
+    sample_count: 1201
+    CL_mean: 0.7658689618110657
+    CM_mean: -0.06475245952606201
+    CL_std: 0.21594563126564026
+    CM_std: 0.050861213356256485
+    CL_CM_covariance: -0.010549647733569145
+    CL_CM_correlation: -0.9605210831499776
+  - alpha: 4.0
+    Re: 500000.0
+    sample_count: 1172
+    CL_mean: 0.760827898979187
+    CM_mean: -0.06389948725700378
+    CL_std: 0.2189321666955948
+    CM_std: 0.05168551951646805
+    CL_CM_covariance: -0.01089517492800951
+    CL_CM_correlation: -0.9628438516494767
+  - alpha: 4.0
+    Re: 600000.0
+    sample_count: 1158
+    CL_mean: 0.7574814558029175
+    CM_mean: -0.06335362046957016
+    CL_std: 0.2232179492712021
+    CM_std: 0.052849750965833664
+    CL_CM_covariance: -0.011365825310349464
+    CL_CM_correlation: -0.9634496248471143
+  - alpha: 5.0
+    Re: 100000.0
+    sample_count: 1221
+    CL_mean: 0.8383951783180237
+    CM_mean: -0.05878779664635658
+    CL_std: 0.1946493238210678
+    CM_std: 0.043602198362350464
+    CL_CM_covariance: -0.007827376946806908
+    CL_CM_correlation: -0.9222637642451668
+  - alpha: 5.0
+    Re: 200000.0
+    sample_count: 1265
+    CL_mean: 0.8617342114448547
+    CM_mean: -0.061691779643297195
+    CL_std: 0.20738889276981354
+    CM_std: 0.04795336350798607
+    CL_CM_covariance: -0.009479445405304432
+    CL_CM_correlation: -0.9531875801526671
+  - alpha: 5.0
+    Re: 300000.0
+    sample_count: 1225
+    CL_mean: 0.8661462664604187
+    CM_mean: -0.06304041296243668
+    CL_std: 0.210931658744812
+    CM_std: 0.04954248666763306
+    CL_CM_covariance: -0.010029694065451622
+    CL_CM_correlation: -0.9597726015224765
+  - alpha: 5.0
+    Re: 400000.0
+    sample_count: 1133
+    CL_mean: 0.8598101735115051
+    CM_mean: -0.06198543682694435
+    CL_std: 0.21546533703804016
+    CM_std: 0.05083737149834633
+    CL_CM_covariance: -0.010515262372791767
+    CL_CM_correlation: -0.9599743914370675
+  - alpha: 5.0
+    Re: 500000.0
+    sample_count: 1110
+    CL_mean: 0.8579771518707275
+    CM_mean: -0.06177748367190361
+    CL_std: 0.2153794914484024
+    CM_std: 0.05098903179168701
+    CL_CM_covariance: -0.010556818917393684
+    CL_CM_correlation: -0.9612846250347574
+  - alpha: 5.0
+    Re: 600000.0
+    sample_count: 1119
+    CL_mean: 0.8591689467430115
+    CM_mean: -0.062220290303230286
+    CL_std: 0.21974211931228638
+    CM_std: 0.05217485502362251
+    CL_CM_covariance: -0.011031662113964558
+    CL_CM_correlation: -0.9622025265674087
+  - alpha: 6.0
+    Re: 100000.0
+    sample_count: 1193
+    CL_mean: 0.9251934885978699
+    CM_mean: -0.053829338401556015
+    CL_std: 0.19170589745044708
+    CM_std: 0.043260607868433
+    CL_CM_covariance: -0.007710742298513651
+    CL_CM_correlation: -0.9297543323813277
+  - alpha: 6.0
+    Re: 200000.0
+    sample_count: 1245
+    CL_mean: 0.9485543966293335
+    CM_mean: -0.058060403913259506
+    CL_std: 0.20178884267807007
+    CM_std: 0.04716257378458977
+    CL_CM_covariance: -0.009043615311384201
+    CL_CM_correlation: -0.9502709461369342
+  - alpha: 6.0
+    Re: 300000.0
+    sample_count: 1207
+    CL_mean: 0.951020359992981
+    CM_mean: -0.05890033021569252
+    CL_std: 0.20786333084106445
+    CM_std: 0.04888058081269264
+    CL_CM_covariance: -0.00972253642976284
+    CL_CM_correlation: -0.956897271637462
+  - alpha: 6.0
+    Re: 400000.0
+    sample_count: 1120
+    CL_mean: 0.9494847059249878
+    CM_mean: -0.0587429441511631
+    CL_std: 0.21166537702083588
+    CM_std: 0.04994087293744087
+    CL_CM_covariance: -0.01012688223272562
+    CL_CM_correlation: -0.9580095979582147
+  - alpha: 6.0
+    Re: 500000.0
+    sample_count: 1087
+    CL_mean: 0.9488689303398132
+    CM_mean: -0.058862097561359406
+    CL_std: 0.21107429265975952
+    CM_std: 0.05017406493425369
+    CL_CM_covariance: -0.010152854956686497
+    CL_CM_correlation: -0.9586801502298772
+  - alpha: 6.0
+    Re: 600000.0
+    sample_count: 1061
+    CL_mean: 0.948982298374176
+    CM_mean: -0.058696795254945755
+    CL_std: 0.2136533260345459
+    CM_std: 0.05076044052839279
+    CL_CM_covariance: -0.010405991226434708
+    CL_CM_correlation: -0.9595071222906277
+  - alpha: 7.0
+    Re: 100000.0
+    sample_count: 1144
+    CL_mean: 1.0053021907806396
+    CM_mean: -0.04805419594049454
+    CL_std: 0.18344341218471527
+    CM_std: 0.04201340302824974
+    CL_CM_covariance: -0.007244548294693232
+    CL_CM_correlation: -0.9399856665125781
+  - alpha: 7.0
+    Re: 200000.0
+    sample_count: 1197
+    CL_mean: 1.0303007364273071
+    CM_mean: -0.053572677075862885
+    CL_std: 0.20084047317504883
+    CM_std: 0.047059815376996994
+    CL_CM_covariance: -0.008985191583633423
+    CL_CM_correlation: -0.9506618344070875
+  - alpha: 7.0
+    Re: 300000.0
+    sample_count: 1181
+    CL_mean: 1.0337387323379517
+    CM_mean: -0.05483725294470787
+    CL_std: 0.2043655812740326
+    CM_std: 0.04802526906132698
+    CL_CM_covariance: -0.009366326034069061
+    CL_CM_correlation: -0.9543148980433611
+  - alpha: 7.0
+    Re: 400000.0
+    sample_count: 1122
+    CL_mean: 1.0311179161071777
+    CM_mean: -0.05470544099807739
+    CL_std: 0.20748354494571686
+    CM_std: 0.04896844923496246
+    CL_CM_covariance: -0.009704778902232647
+    CL_CM_correlation: -0.9551807145788381
+  - alpha: 7.0
+    Re: 500000.0
+    sample_count: 1060
+    CL_mean: 1.0291404724121094
+    CM_mean: -0.054126884788274765
+    CL_std: 0.20652377605438232
+    CM_std: 0.04888858646154404
+    CL_CM_covariance: -0.009633734822273254
+    CL_CM_correlation: -0.9541510509821347
+  - alpha: 7.0
+    Re: 600000.0
+    sample_count: 1041
+    CL_mean: 1.028952956199646
+    CM_mean: -0.05360183119773865
+    CL_std: 0.20711065828800201
+    CM_std: 0.048947524279356
+    CL_CM_covariance: -0.00966363400220871
+    CL_CM_correlation: -0.9532510281365457
+  - alpha: 8.0
+    Re: 100000.0
+    sample_count: 1070
+    CL_mean: 1.0836718082427979
+    CM_mean: -0.04362840577960014
+    CL_std: 0.17917963862419128
+    CM_std: 0.04155100882053375
+    CL_CM_covariance: -0.007009291555732489
+    CL_CM_correlation: -0.9414644907328134
+  - alpha: 8.0
+    Re: 200000.0
+    sample_count: 1145
+    CL_mean: 1.0987523794174194
+    CM_mean: -0.04768392816185951
+    CL_std: 0.19758190214633942
+    CM_std: 0.04623551666736603
+    CL_CM_covariance: -0.008630072697997093
+    CL_CM_correlation: -0.9446949616282097
+  - alpha: 8.0
+    Re: 300000.0
+    sample_count: 1139
+    CL_mean: 1.1025564670562744
+    CM_mean: -0.048845481127500534
+    CL_std: 0.20211906731128693
+    CM_std: 0.04736776277422905
+    CL_CM_covariance: -0.009061070159077644
+    CL_CM_correlation: -0.9464319742417329
+  - alpha: 8.0
+    Re: 400000.0
+    sample_count: 1077
+    CL_mean: 1.1007444858551025
+    CM_mean: -0.04860622063279152
+    CL_std: 0.20420244336128235
+    CM_std: 0.04784015938639641
+    CL_CM_covariance: -0.009242000058293343
+    CL_CM_correlation: -0.946046478291184
+  - alpha: 8.0
+    Re: 500000.0
+    sample_count: 1027
+    CL_mean: 1.1013067960739136
+    CM_mean: -0.048870109021663666
+    CL_std: 0.2031296342611313
+    CM_std: 0.047961048781871796
+    CL_CM_covariance: -0.009204745292663574
+    CL_CM_correlation: -0.9448215550228324
+  - alpha: 8.0
+    Re: 600000.0
+    sample_count: 983
+    CL_mean: 1.1046630144119263
+    CM_mean: -0.049211494624614716
+    CL_std: 0.20363014936447144
+    CM_std: 0.0480828694999218
+    CL_CM_covariance: -0.009253613650798798
+    CL_CM_correlation: -0.9451023980121275
+collection:
+  successful_samples_per_operating_condition: 20
+  max_xfoil_attempts_per_operating_condition: 300
+  operating_condition_count: 54
+  requested_count: 2108
+  successful_count: 1080
+  xfoil_attempted_count: 2108
+  convergence_rate: 0.5374762808349146
+  status_counts:
+    success: 1080
+    xfoil_failed: 975
+    quota_excess_success: 53
+  per_operating_condition:
+  - alpha: 0.0
+    Re: 100000.0
+    successful_count: 20
+    attempt_count: 20
+  - alpha: 0.0
+    Re: 200000.0
+    successful_count: 20
+    attempt_count: 20
+  - alpha: 0.0
+    Re: 300000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 0.0
+    Re: 400000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 0.0
+    Re: 500000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 0.0
+    Re: 600000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 1.0
+    Re: 100000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 1.0
+    Re: 200000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 1.0
+    Re: 300000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 1.0
+    Re: 400000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 1.0
+    Re: 500000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 1.0
+    Re: 600000.0
+    successful_count: 20
+    attempt_count: 28
+  - alpha: 2.0
+    Re: 100000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 2.0
+    Re: 200000.0
+    successful_count: 20
+    attempt_count: 20
+  - alpha: 2.0
+    Re: 300000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 2.0
+    Re: 400000.0
+    successful_count: 20
+    attempt_count: 20
+  - alpha: 2.0
+    Re: 500000.0
+    successful_count: 20
+    attempt_count: 20
+  - alpha: 2.0
+    Re: 600000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 3.0
+    Re: 100000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 3.0
+    Re: 200000.0
+    successful_count: 20
+    attempt_count: 20
+  - alpha: 3.0
+    Re: 300000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 3.0
+    Re: 400000.0
+    successful_count: 20
+    attempt_count: 28
+  - alpha: 3.0
+    Re: 500000.0
+    successful_count: 20
+    attempt_count: 20
+  - alpha: 3.0
+    Re: 600000.0
+    successful_count: 20
+    attempt_count: 28
+  - alpha: 4.0
+    Re: 100000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 4.0
+    Re: 200000.0
+    successful_count: 20
+    attempt_count: 28
+  - alpha: 4.0
+    Re: 300000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 4.0
+    Re: 400000.0
+    successful_count: 20
+    attempt_count: 28
+  - alpha: 4.0
+    Re: 500000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 4.0
+    Re: 600000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 5.0
+    Re: 100000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 5.0
+    Re: 200000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 5.0
+    Re: 300000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 5.0
+    Re: 400000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 5.0
+    Re: 500000.0
+    successful_count: 20
+    attempt_count: 32
+  - alpha: 5.0
+    Re: 600000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 6.0
+    Re: 100000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 6.0
+    Re: 200000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 6.0
+    Re: 300000.0
+    successful_count: 20
+    attempt_count: 40
+  - alpha: 6.0
+    Re: 400000.0
+    successful_count: 20
+    attempt_count: 32
+  - alpha: 6.0
+    Re: 500000.0
+    successful_count: 20
+    attempt_count: 52
+  - alpha: 6.0
+    Re: 600000.0
+    successful_count: 20
+    attempt_count: 44
+  - alpha: 7.0
+    Re: 100000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 7.0
+    Re: 200000.0
+    successful_count: 20
+    attempt_count: 32
+  - alpha: 7.0
+    Re: 300000.0
+    successful_count: 20
+    attempt_count: 60
+  - alpha: 7.0
+    Re: 400000.0
+    successful_count: 20
+    attempt_count: 88
+  - alpha: 7.0
+    Re: 500000.0
+    successful_count: 20
+    attempt_count: 88
+  - alpha: 7.0
+    Re: 600000.0
+    successful_count: 20
+    attempt_count: 80
+  - alpha: 8.0
+    Re: 100000.0
+    successful_count: 20
+    attempt_count: 24
+  - alpha: 8.0
+    Re: 200000.0
+    successful_count: 20
+    attempt_count: 72
+  - alpha: 8.0
+    Re: 300000.0
+    successful_count: 20
+    attempt_count: 224
+  - alpha: 8.0
+    Re: 400000.0
+    successful_count: 20
+    attempt_count: 168
+  - alpha: 8.0
+    Re: 500000.0
+    successful_count: 20
+    attempt_count: 80
+  - alpha: 8.0
+    Re: 600000.0
+    successful_count: 20
+    attempt_count: 88
+surrogate:
+  checkpoint_path: model/alternating_checkpoints\round_001_surrogate.pt
+  baseline_checkpoint_path: model/surrogate_airfoil_group_best.pt
+  epochs: 20
+  historical_success_count: 0
+  new_success_count: 1080
+  generated_training_count: 1080
+  final_epoch_losses:
+    generated: 0.009262053590111516
+    original: 0.06641473249946668
+    anchor: 0.0
+    total: 0.07567678610494942
+  original_independent_test:
+    before:
+      weighted_mse: 0.1679350584745407
+      mae: 0.00985779706388712
+      target_order:
+      - CM
+      - CL
+      - CD
+      per_target_mae:
+        CM: 0.004473092034459114
+        CL: 0.02408599853515625
+        CD: 0.0010142935207113624
+      per_target_rmse:
+        CM: 0.006863754708319902
+        CL: 0.03838255628943443
+        CD: 0.001895766705274582
+      per_target_r2:
+        CM: 0.9846749901771545
+        CL: 0.9875960946083069
+        CD: 0.9302873611450195
+    after:
+      weighted_mse: 0.1859227567911148
+      mae: 0.010034319944679737
+      target_order:
+      - CM
+      - CL
+      - CD
+      per_target_mae:
+        CM: 0.004573327023535967
+        CL: 0.02444477193057537
+        CD: 0.0010848557576537132
+      per_target_rmse:
+        CM: 0.006921141874045134
+        CL: 0.039158742874860764
+        CD: 0.001999650150537491
+      per_target_r2:
+        CM: 0.9844176173210144
+        CL: 0.9870893955230713
+        CD: 0.922437846660614
+  generated_training_in_sample:
+    weighted_mse: 0.01705777272582054
+    mae: 0.0031177003402262926
+    target_order:
+    - CM
+    - CL
+    - CD
+    per_target_mae:
+      CM: 0.0014048995217308402
+      CL: 0.007585582789033651
+      CD: 0.00036261798231862485
+    per_target_rmse:
+      CM: 0.0018537100404500961
+      CL: 0.010529362596571445
+      CD: 0.0006097906734794378
+    per_target_r2:
+      CM: 0.9985828399658203
+      CL: 0.9987456798553467
+      CD: 0.9961012005805969
+gan:
+  checkpoint_path: model/alternating_checkpoints\round_001_gan.pt
+  baseline_checkpoint_path: model/gan_final.pt
+  frozen_surrogate_checkpoint_path: model/alternating_checkpoints\round_001_surrogate.pt
+  epochs: 20
+  original_real_count: 64202
+  generated_real_count: 1080
+  extended_condition_count: 527
+  final_epoch_losses:
+    discriminator_loss: -0.11091311256794122
+    generator_adversarial_loss: 2.842409061790388
+    generator_aerodynamic_loss: 0.00521926387851147
+    generator_trailing_edge_crossing_loss: 5.5992896515679014e-06
+    generator_total_loss: 2.9728962555855905
+coefficient_plot_path: reports/alternating\round_001_coefficients.png
+accumulated_success_count: 1080

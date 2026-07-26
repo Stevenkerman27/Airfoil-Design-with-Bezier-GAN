@@ -19,4 +19,9 @@ def test_gan_condition_and_target_weights_are_four_dimensional():
     assert config['cond_dim'] == 4
     assert GAN_LABEL_ORDER == ['alpha', 'Re', 'CL', 'CM']
     assert 'gan_thickness_loss_weight' not in config
-    assert build_gan_surrogate_target_weights(config, torch.device('cpu')).tolist() == [10.0, 1.0]
+    assert 'gan_crossing_loss_weight' not in config
+    assert config['gan_trailing_edge_crossing_point_count'] == 3
+    assert config['gan_trailing_edge_crossing_te_weight'] == 2.0
+    assert build_gan_surrogate_target_weights(config, torch.device('cpu')).tolist() == (
+        config['gan_surrogate_target_loss_weights']
+    )
